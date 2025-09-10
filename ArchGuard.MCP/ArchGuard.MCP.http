@@ -1,0 +1,6 @@
+@ArchGuard_MCP_HostAddress = http://localhost:5294
+
+GET {{ArchGuard_MCP_HostAddress}}/weatherforecast/
+Accept: application/json
+
+###
