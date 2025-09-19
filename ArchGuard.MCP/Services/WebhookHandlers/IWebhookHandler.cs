@@ -15,18 +15,15 @@ public abstract class WebhookHandlerBase : IWebhookHandler
     protected GitHubCheckService CheckService { get; set; }
     protected GitHubAppAuthService AuthService { get; set; }
     protected IGitHubClient GitHubClient { get; set; }
-    protected IRepositoryPathResolver PathResolver { get; set; }
 
     protected WebhookHandlerBase(
         GitHubCheckService checkService,
         GitHubAppAuthService authService,
-        IGitHubClient githubClient,
-        IRepositoryPathResolver pathResolver)
+        IGitHubClient githubClient)
     {
         this.CheckService = checkService;
         this.AuthService = authService;
         this.GitHubClient = githubClient;
-        this.PathResolver = pathResolver;
     }
 
     public abstract Task<IResult> HandleAsync(string requestBody, long installationId, string deliveryId);

@@ -1,4 +1,5 @@
 using ArchGuard.MCP.Models;
+using ArchGuard.Shared;
 using Octokit;
 using System.Text.Json;
 
@@ -16,11 +17,10 @@ public class CheckRunWebhookHandler : WebhookHandlerBase
         GitHubCheckService checkService,
         GitHubAppAuthService authService,
         IGitHubClient githubClient,
-        IRepositoryPathResolver pathResolver,
         IRepositoryCloneService cloneService,
         IConfiguration configuration,
         ILogger<CheckRunWebhookHandler> logger)
-        : base(checkService, authService, githubClient, pathResolver)
+        : base(checkService, authService, githubClient)
     {
         this.Logger = logger;
         this.CloneService = cloneService;
@@ -64,10 +64,19 @@ public class CheckRunWebhookHandler : WebhookHandlerBase
 
     private async Task<IResult> HandleRerequestedAsync(GitHubCheckRunWebhookPayload checkRunPayload, long installationId)
     {
-        // Get repository root path via cloning
-        var root = await PathResolver.GetRootFromWebhookAsync(checkRunPayload, installationId);
+        // Clone repository directly to get both path formats
+        var cloneResult = await CloneService.CloneRepositoryAsync(
+            checkRunPayload.Repository.CloneUrl,
+            checkRunPayload.CheckRun.HeadSha,
+            checkRunPayload.Repository.FullName);
 
-        var checkArgs = new CheckExecutionArgs
+        if (!cloneResult.Success)
+        {
+            this.Logger.LogError("Failed to clone repository: {ErrorMessage}", cloneResult.ErrorMessage);
+            return Results.Problem("Failed to clone repository");
+        }
+
+        var diCheckArgs = new CheckExecutionArgs
         {
             RepoOwner = checkRunPayload.Repository.Owner.Login,
             RepoName = checkRunPayload.Repository.Name,
@@ -80,37 +89,26 @@ public class CheckRunWebhookHandler : WebhookHandlerBase
         };
 
         // Route to appropriate check based on name
-        if (checkArgs.CheckName == GitHubCheckService.DependencyRegistrationCheckName)
+        if (diCheckArgs.CheckName == ValidationService.DependencyRegistrationCheckName)
         {
             // Fire-and-forget: Intentionally not awaited to allow immediate return
             // The Task.Run executes async Octokit operations in background
-            _ = Task.Run(async () => 
+            _ = Task.Run(async () =>
             {
                 try
                 {
-                    await CheckService.ExecuteDepInjectionCheckAsync(checkArgs, root, installationId, GitHubClient);
-                    
+                    // ARCHGUARD_TEMPLATE_WEBHOOK_RULE_START
+                    await CheckService.ExecuteDepInjectionCheckAsync(diCheckArgs, cloneResult.WindowsPath, cloneResult.WslPath, installationId, GitHubClient);
+                    // ARCHGUARD_TEMPLATE_WEBHOOK_RULE_END
+
                     // Clean up repository after validation if configured to do so
                     var cleanupAfterValidation = this.Configuration.GetValue("RepositoryCloning:CleanupAfterValidation", true);
                     if (cleanupAfterValidation)
                     {
-                        this.Logger.LogInformation("Cleaning up repository after validation: {RepoFullName} at {CommitSha}", 
+                        this.Logger.LogInformation("Cleaning up repository after validation: {RepoFullName} at {CommitSha}",
                             checkRunPayload.Repository.FullName, checkRunPayload.CheckRun.HeadSha);
-                        
-                        // Reconstruct the path based on the known pattern
-                        var tempBasePath = Path.Combine(Path.GetTempPath(), "archguard-clones");
-                        var sanitizedRepoName = checkRunPayload.Repository.FullName.Replace('/', '-').Replace('\\', '-');
-                        var shortCommitSha = checkRunPayload.CheckRun.HeadSha.Length > 8 ? checkRunPayload.CheckRun.HeadSha.Substring(0, 8) : checkRunPayload.CheckRun.HeadSha;
-                        var expectedPath = Path.Combine(tempBasePath, $"{sanitizedRepoName}-{shortCommitSha}");
-                        
-                        if (Directory.Exists(expectedPath))
-                        {
-                            await this.CloneService.CleanupRepositoryAsync(expectedPath);
-                        }
-                        else
-                        {
-                            this.Logger.LogWarning("Expected repository path not found for cleanup: {ExpectedPath}", expectedPath);
-                        }
+
+                        await this.CloneService.CleanupRepositoryAsync(cloneResult.WindowsPath);
                     }
                 }
                 catch (Exception ex)
@@ -119,9 +117,43 @@ public class CheckRunWebhookHandler : WebhookHandlerBase
                 }
             });
         }
+        // ARCHGUARD_INSERTION_POINT_RULE_ROUTING_START
+        // New rule routing conditions go here in alphabetical order by rule name
+        // Format: else if (diCheckArgs.CheckName == RuleCheckName) { ... }
+
+        // ARCHGUARD_GENERATED_RULE_START - ValidateEntityDtoPropertyMapping
+        // Generated from template on: 9/17/25
+        // DO NOT EDIT - This code will be regenerated
+        else if (diCheckArgs.CheckName == ValidationService.EntityDtoPropertyMappingCheckName)
+        {
+            _ = Task.Run(async () =>
+            {
+                try
+                {
+                    await CheckService.ExecuteEntityDtoPropertyMappingCheckAsync(diCheckArgs, cloneResult.WindowsPath, cloneResult.WslPath, installationId, GitHubClient);
+
+                    // Clean up repository after validation if configured to do so
+                    var cleanupAfterValidation = this.Configuration.GetValue("RepositoryCloning:CleanupAfterValidation", true);
+                    if (cleanupAfterValidation)
+                    {
+                        this.Logger.LogInformation("Cleaning up repository after validation: {RepoFullName} at {CommitSha}",
+                            checkRunPayload.Repository.FullName, checkRunPayload.CheckRun.HeadSha);
+
+                        await this.CloneService.CleanupRepositoryAsync(cloneResult.WindowsPath);
+                    }
+                }
+                catch (Exception ex)
+                {
+                    this.Logger.LogError(ex, "Error during validation or cleanup for {RepoFullName}", checkRunPayload.Repository.FullName);
+                }
+            });
+        }
+        // ARCHGUARD_GENERATED_RULE_END - ValidateEntityDtoPropertyMapping
+
+        // ARCHGUARD_INSERTION_POINT_RULE_ROUTING_END
         else
         {
-            this.Logger.LogWarning("Received rerequested action for unknown check name: {CheckName}", checkArgs.CheckName);
+            this.Logger.LogWarning("Received rerequested action for unknown check name: {CheckName}", diCheckArgs.CheckName);
         }
 
         return Results.Accepted("Check run rerequest initiated");

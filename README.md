@@ -1,30 +1,29 @@
-# ArchGuard (Architecture Guardian) MCP Server
+# ArchGuard (Architecture Guardian) MCP Server / GitHub App
 
 A .NET 9 application that provides C# validation checks
-through both AI agent tools (MCP) and automated GitHub webhook checks. 
-The current implementation ensures only that all constructor dependencies 
-are properly registered in dependency injection containers. The key is
-that it can be easily extended to handle any validation needed, to make
-sure your Architecure guidelines are properly followed.
+through both AI Agent tools (MCP) and automated GitHub webhook checks. 
+The current implementation only has 2 simple rule validations, created for demo purposes.
+The key is that the Template-based rule system can be easily extended to handle any validation needed, to make
+sure your Architecure Guidelines are properly followed (see TEMPLATE_SYSTEM.md).
 
-Please see my LinkedIn posts for more info:
-https://www.linkedin.com/feed/update/urn:li:activity:7370622737263894528/
-https://www.linkedin.com/feed/update/urn:li:activity:7371608592623312896/
-
+Please see my LinkedIn posts for more info:  
+https://www.linkedin.com/feed/update/urn:li:activity:7370622737263894528/  
+https://www.linkedin.com/feed/update/urn:li:activity:7371608592623312896/  
+https://www.linkedin.com/feed/update/urn:li:activity:7373155482225647616/  
+https://www.linkedin.com/feed/update/urn:li:activity:7374811981289103360/  
 ## Overview
 
 ArchGuard operates in two modes:
 1. **MCP Server Mode**: AI agents (GitHub CoPiliot in VS and VS Code) can call validation tools directly
 2. **GitHub Webhook Mode**: Automated validation triggered by GitHub events (push, pull requests, check runs)
 
-Both modes use the same core validation logic that spawns Claude Code to analyze C# projects for 
+Both modes use the same core validation logic that spawns an AI Agent to analyze C# projects for 
 dependency injection issues or any other rules defined.
 
 ## Key Features
 
 - **Dual operation modes** - MCP tools + GitHub webhook automation
 - **Dynamic repository cloning** - Analyzes any GitHub repository on-demand
-- **Cross-platform compatibility** - Windows development with WSL Claude Code integration
 - **Background cleanup** - Automatic removal of temporary cloned repositories
 - **Private repository support** - GitHub App authentication for private repos
 
@@ -74,7 +73,7 @@ Update `appsettings.json`:
     "PrivateKeyFilePath": "path/to/private-key.pem"
   },
   "RepositoryCloning": {
-    "CodingAgentType": "ClaudeCode",
+    "CodingAgent": "ClaudeCode",
     "CleanupIntervalMinutes": 60,
     "MaxRetentionHours": 2,
     "CleanupAfterValidation": true
@@ -104,14 +103,15 @@ dotnet run
 ### What It Validates
 
 - **Constructor dependencies** - Ensures all ctor injected services are registered
-- **Easily Extended**
+- **Entity/DTO property mapping** - Validates property mappings between entities and DTOs
+- **Easily Extended** - Template-based rule system for adding new validation rules (see `TEMPLATE_SYSTEM.md`)
 
 ### How It Works
 
-1. **Repository Access**: Clones GitHub repository to temporary directory
-3. **Analysis**: Spawns Claude Code process to analyze the project
-4. **Results**: Returns JSON with validation results, violations, and explanations
-5. **Cleanup**: Removes temporary repository (immediate or background)
+1. **Repository Access**: Clones GitHub repository to temporary directory, or accesses local directory when called via MCP.
+2. **Analysis**: Spawns Claude Code process to analyze the project
+3. **Results**: Returns JSON with validation results, violations, and explanations
+4. **Cleanup**: Removes temporary repository (immediate or background)
 
 ### Tool Input Schema
 
@@ -128,8 +128,10 @@ dotnet run
 
 ### MCP Mode (AI Agents)
 
-AI agents call the `ValidateDependencyRegistrationAsync` tool:
-- Tool clones repository using MCP server's root access
+AI agents call validation tools:
+- `ValidateDependencyRegistration` (template rule)
+- `ValidateEntityDtoPropertyMapping` (generated rule)
+- Tool clones repository using MCP server's root access or accesses local directory
 - Returns structured validation results
 
 ### GitHub Webhook Mode
@@ -171,36 +173,6 @@ Automated validation triggered by GitHub events:
 - **Disk space monitoring**: Emergency cleanup when space is low
 - **Immediate cleanup**: Option to clean up right after validation
 
-## Configuration Reference
-
-### Repository Cloning Settings
-
-```json
-{
-  "RepositoryCloning": {
-    "CodingAgentType": "ClaudeCode",           // Path conversion target
-    "CleanupIntervalMinutes": 60,             // How often to check for cleanup
-    "MaxRetentionHours": 2,                   // How long to keep repositories  
-    "CleanupAfterValidation": true,           // Clean immediately after validation
-    "MaxConcurrentClones": 3,                 // Limit concurrent operations
-    "RetryAttempts": 3,                       // Clone retry attempts
-    "RetryDelaySeconds": 5,                   // Delay between retries
-    "TimeoutMinutes": 10                      // Clone operation timeout
-  }
-}
-```
-
-### GitHub App Settings
-
-```json
-{
-  "GitHub": {
-    "AppId": "123456",                        // GitHub App ID
-    "PrivateKeyFilePath": "private-key.pem"   // Path to GitHub App private key
-    // Note: InstallationId comes from webhooks, not config
-  }
-}
-```
 
 ## Troubleshooting
 
@@ -228,6 +200,15 @@ Automated validation triggered by GitHub events:
 - Expected URL format: `https://your-ngrok-domain/mcp/` (with trailing slash)
 
 See Original Enphase MCP Server Project README for additional OAuth server and MCP troubleshooting.
+
+## Known Limitations
+
+- **Gemini CLI reliability**: Output may occasionally disappear during validation
+- **Debug logging**: Extensive console output during active development
+- **Context/diffs**: Currently logged but not actively used in validation logic
+- **DI rule scope**: Only validates constructor dependencies (not property injection, etc.)
+
+For detailed technical issues and development notes, see [KNOWN_ISSUES.md](KNOWN_ISSUES.md).
 
 ## Copyright and License
 

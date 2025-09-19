@@ -1,4 +1,5 @@
 using ArchGuard.MCP.Models;
+using ArchGuard.Shared;
 using Octokit;
 using System.Text.Json;
 
@@ -18,11 +19,10 @@ public class PushWebhookHandler : WebhookHandlerBase
         GitHubCheckService checkService,
         GitHubAppAuthService authService,
         IGitHubClient githubClient,
-        IRepositoryPathResolver pathResolver,
         IRepositoryCloneService cloneService,
         IConfiguration configuration,
         ILogger<PushWebhookHandler> logger)
-        : base(checkService, authService, githubClient, pathResolver)
+        : base(checkService, authService, githubClient)
     {
         this.Logger = logger;
         this.CloneService = cloneService;
@@ -59,48 +59,96 @@ public class PushWebhookHandler : WebhookHandlerBase
             var installationToken = await AuthService.GetInstallationTokenAsync(installationId);
             GitHubClient.Connection.Credentials = new Credentials(installationToken, AuthenticationType.Bearer);
 
-            // Get repository root path via cloning
-            var root = await PathResolver.GetRootFromWebhookAsync(pushPayload, installationId);
-
             // Prepare check execution arguments
-            var checkArgs = new CheckExecutionArgs
+            var diCheckArgs = new CheckExecutionArgs
             {
                 RepoOwner = pushPayload.Repository.Owner.Login,
                 RepoName = pushPayload.Repository.Name,
                 CommitSha = pushPayload.After,
-                CheckName = GitHubCheckService.DependencyRegistrationCheckName,
+                CheckName = ValidationService.DependencyRegistrationCheckName,
                 InstallationId = installationId,
                 ExistingCheckRunId = null,
-                InitialTitle = GitHubCheckService.DependencyRegistrationCheckName,
-                InitialSummary = "Starting DI registration validation for this push."
+                InitialTitle = ValidationService.DependencyRegistrationCheckName,
+                InitialSummary = "Starting " + ValidationService.DependencyRegistrationCheckName + " validation for this push."
             };
 
-            // Fire-and-forget: Intentionally not awaited to allow immediate return
-            // The Task.Run executes async Octokit operations in background
-            _ = Task.Run(async () => 
+            // ARCHGUARD_INSERTION_POINT_ARGS_START
+            // New rule CheckExecutionArgs declarations go here in alphabetical order by rule name
+
+            // ARCHGUARD_GENERATED_RULE_START - ValidateEntityDtoPropertyMapping
+            // Generated from template on: 9/17/25
+            // DO NOT EDIT - This code will be regenerated
+            var entityDtoPropertyMappingCheckArgs = new CheckExecutionArgs
+            {
+                RepoOwner = pushPayload.Repository.Owner.Login,
+                RepoName = pushPayload.Repository.Name,
+                CommitSha = pushPayload.After,
+                CheckName = ValidationService.EntityDtoPropertyMappingCheckName,
+                InstallationId = installationId,
+                ExistingCheckRunId = null,
+                InitialTitle = ValidationService.EntityDtoPropertyMappingCheckName,
+                InitialSummary = "Starting " + ValidationService.EntityDtoPropertyMappingCheckName + " validation for this push."
+            };
+            // ARCHGUARD_GENERATED_RULE_END - ValidateEntityDtoPropertyMapping
+
+            // ARCHGUARD_INSERTION_POINT_ARGS_END
+
+            // Phase 1: Create all checks immediately (synchronous for immediate GitHub UI visibility)
+            // ARCHGUARD_TEMPLATE_CHECK_CREATION_START
+            var depCheckId = await CheckService.CreateCheckAsync(ValidationService.DependencyRegistrationCheckName, diCheckArgs, GitHubClient, GitHubCheckService.DependencyRegistrationDetailsUrlForCheck);
+            // ARCHGUARD_TEMPLATE_CHECK_CREATION_END
+
+            // ARCHGUARD_INSERTION_POINT_CHECK_CREATION_START
+            // New rule check creation calls go here in alphabetical order by rule name
+
+            // ARCHGUARD_GENERATED_RULE_START - ValidateEntityDtoPropertyMapping
+            // Generated from template on: 9/17/25
+            // DO NOT EDIT - This code will be regenerated
+            var entityDtoPropertyMappingCheckId = await CheckService.CreateCheckAsync(ValidationService.EntityDtoPropertyMappingCheckName, entityDtoPropertyMappingCheckArgs, GitHubClient, GitHubCheckService.EntityDtoPropertyMappingDetailsUrlForCheck);
+            // ARCHGUARD_GENERATED_RULE_END - ValidateEntityDtoPropertyMapping
+
+            // ARCHGUARD_INSERTION_POINT_CHECK_CREATION_END
+
+            // Phase 2: Execute all checks (fire-and-forget background processing)
+            _ = Task.Run(async () =>
             {
                 try
                 {
-                    await CheckService.ExecuteDepInjectionCheckAsync(checkArgs, root, installationId, GitHubClient);
-                    
+                    // Clone repository directly to get both path formats
+                    var cloneResult = await CloneService.CloneRepositoryAsync(
+                        pushPayload.Repository.CloneUrl,
+                        pushPayload.After,
+                        pushPayload.Repository.FullName);
+
+                    if (!cloneResult.Success)
+                    {
+                        this.Logger.LogError("Failed to clone repository: {ErrorMessage}", cloneResult.ErrorMessage);
+                        return;
+                    }
+
+                    // ARCHGUARD_TEMPLATE_WEBHOOK_RULE_START
+                    await CheckService.ExecuteDepInjectionCheckAsync(diCheckArgs, cloneResult.WindowsPath, cloneResult.WslPath, installationId, GitHubClient, depCheckId);
+                    // ARCHGUARD_TEMPLATE_WEBHOOK_RULE_END
+
+                    // ARCHGUARD_INSERTION_POINT_RULE_EXECUTION_START
+                    // New rule execution calls go here in alphabetical order by rule name
+
+                    // ARCHGUARD_GENERATED_RULE_START - ValidateEntityDtoPropertyMapping
+                    // Generated from template on: 9/17/25
+                    // DO NOT EDIT - This code will be regenerated
+                    await CheckService.ExecuteEntityDtoPropertyMappingCheckAsync(entityDtoPropertyMappingCheckArgs, cloneResult.WindowsPath, cloneResult.WslPath, installationId, GitHubClient, entityDtoPropertyMappingCheckId);
+                    // ARCHGUARD_GENERATED_RULE_END - ValidateEntityDtoPropertyMapping
+
+                    // ARCHGUARD_INSERTION_POINT_RULE_EXECUTION_END
+
                     // Clean up repository after validation if configured to do so
                     var cleanupAfterValidation = this.Configuration.GetValue("RepositoryCloning:CleanupAfterValidation", true);
                     if (cleanupAfterValidation)
                     {
-                        this.Logger.LogInformation("Cleaning up repository after validation: {RepoFullName} at {CommitSha}", 
+                        this.Logger.LogInformation("Cleaning up repository after validation: {RepoFullName} at {CommitSha}",
                             pushPayload.Repository.FullName, pushPayload.After);
-                        
-                        // We need to get the LocalPath from the clone result, but PathResolver only returns AgentPath
-                        // For now, we'll reconstruct the path based on the known pattern
-                        var tempBasePath = Path.Combine(Path.GetTempPath(), "archguard-clones");
-                        var sanitizedRepoName = pushPayload.Repository.FullName.Replace('/', '-').Replace('\\', '-');
-                        var shortCommitSha = pushPayload.After.Length > 8 ? pushPayload.After.Substring(0, 8) : pushPayload.After;
-                        var expectedPath = Path.Combine(tempBasePath, $"{sanitizedRepoName}-{shortCommitSha}");
-                        
-                        if (Directory.Exists(expectedPath))
-                        {
-                            await this.CloneService.CleanupRepositoryAsync(expectedPath);
-                        }
+
+                        await this.CloneService.CleanupRepositoryAsync(cloneResult.WindowsPath);
                     }
                 }
                 catch (Exception ex)

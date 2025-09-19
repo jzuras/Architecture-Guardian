@@ -1,5 +1,6 @@
 using ArchGuard.MCP.Services;
 using ArchGuard.MCP.Services.WebhookHandlers;
+using ArchGuard.Shared;
 using ArchGuard_MCP.Tools;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.AspNetCore.Mvc;
@@ -143,7 +144,7 @@ public class Program
                     },
                     "diffs": {
                         "type": "array",
-                        "description": "IMPORTANT! Do NOT assume that there are no diffs! Always run these steps: Step 1: Run git --no - pager diff HEAD --unified = 3 to get recent changes. Step 2: Pass the output of the git diff command as the 'diffs' parameter to the Validate Dependency Registration tool. Step 3: If the output is empty, pass an empty array([]).",
+                        "description": "IMPORTANT! Do NOT assume that there are no diffs! Always run these steps: Step 1: Run git --no - pager diff HEAD --unified = 3 to get recent changes. Step 2: Pass the output of the git diff command as the 'diffs' parameter to the validation tool. Step 3: If the output is empty, pass an empty array([]).",
                         "items": { "type": "string" }
                     }
                 },
@@ -151,9 +152,30 @@ public class Program
             }
         """);
 
+        // ARCHGUARD_TEMPLATE_TOOL_REGISTRATION_START
+        // TEMPLATE_TOOL_VARIABLE: dependencyRegTool
+        // TEMPLATE_METHOD_REFERENCE: ArchValidationTool.ValidateDependencyRegistrationAsync
         var dependencyRegTool = McpServerTool.Create(typeof(ArchValidationTool).GetMethod(nameof(ArchValidationTool.ValidateDependencyRegistrationAsync))!);
         dependencyRegTool.ProtocolTool.Name = nameof(ArchValidationTool.ValidateDependencyRegistrationAsync);
         dependencyRegTool.ProtocolTool.InputSchema = inputSchema;
+        dependencyRegTool.ProtocolTool.Title = "Validate " + ValidationService.DependencyRegistrationCheckName;
+        dependencyRegTool.ProtocolTool.Description = ArchValidationTool.DependencyRegistrationMcpToolDescription;
+        // ARCHGUARD_TEMPLATE_TOOL_REGISTRATION_END
+
+        // ARCHGUARD_INSERTION_POINT_TOOL_REGISTRATION_START
+        // New rule tool registrations go here in alphabetical order by rule name
+
+        // ARCHGUARD_GENERATED_RULE_START - ValidateEntityDtoPropertyMapping
+        // Generated from template on: 9/17/25
+        // DO NOT EDIT - This code will be regenerated
+        var entityDtoPropertyMappingTool = McpServerTool.Create(typeof(ArchValidationTool).GetMethod(nameof(ArchValidationTool.ValidateEntityDtoPropertyMappingAsync))!);
+        entityDtoPropertyMappingTool.ProtocolTool.Name = nameof(ArchValidationTool.ValidateEntityDtoPropertyMappingAsync);
+        entityDtoPropertyMappingTool.ProtocolTool.InputSchema = inputSchema;
+        entityDtoPropertyMappingTool.ProtocolTool.Title = "Validate " + ValidationService.EntityDtoPropertyMappingCheckName;
+        entityDtoPropertyMappingTool.ProtocolTool.Description = ArchValidationTool.EntityDtoPropertyMappingMcpToolDescription;
+        // ARCHGUARD_GENERATED_RULE_END - ValidateEntityDtoPropertyMapping
+
+        // ARCHGUARD_INSERTION_POINT_TOOL_REGISTRATION_END
         #endregion
 
         McpServerOptions mcpServerOptions = new()
@@ -169,13 +191,26 @@ public class Program
             {
                 Tools = new ToolsCapability
                 {
+                    // ARCHGUARD_TEMPLATE_TOOL_COLLECTION_START
+                    // Note: AI agent will need to add new tools to this collection
                     ToolCollection = new McpServerPrimitiveCollection<McpServerTool>
                     {
-                        dependencyRegTool
+                        dependencyRegTool,
+                        // ARCHGUARD_INSERTION_POINT_TOOL_COLLECTION_START
+                        // New rule tools go here in alphabetical order by rule name
+
+                        // ARCHGUARD_GENERATED_RULE_START - ValidateEntityDtoPropertyMapping
+                        // Generated from template on: 9/17/25
+                        // DO NOT EDIT - This code will be regenerated
+                        entityDtoPropertyMappingTool,
+                        // ARCHGUARD_GENERATED_RULE_END - ValidateEntityDtoPropertyMapping
+
+                        // ARCHGUARD_INSERTION_POINT_TOOL_COLLECTION_END
                         // Another way to define a tool, if an input schema is not needed:
                         //McpServerTool.Create(typeof(ArchValidationTool).GetMethod(nameof(ArchValidationTool.ValidateDependencyRegistrationAsync))!),
 
                     }
+                    // ARCHGUARD_TEMPLATE_TOOL_COLLECTION_END
                 }
             }
         };
@@ -193,6 +228,14 @@ public class Program
             // An earlier project had to use this option for the AI Foundry AI Agent, so that client may no longer work for this MCP Server.
             //options.Stateless = true;
         });
+
+        // Set the ValidationService Selected Agent from app settings file.
+        var selectedAgent = builder.Configuration.GetValue<string>("RepositoryCloning:CodingAgent", "ClaudeCode");
+        if (Enum.TryParse<CodingAgent>(selectedAgent, out var parsedAgent))
+        {
+            ValidationService.SelectedCodingAgent = parsedAgent;
+        }
+        Console.WriteLine("Selected Agent: " + parsedAgent);
 
         // Github services
         builder.Services.AddTransient<GitHubCheckService>();
@@ -213,7 +256,6 @@ public class Program
         builder.Services.AddScoped<IGitHubWebhookService, GitHubWebhookService>();
         builder.Services.AddScoped<IGitHubWebhookAuthenticator, GitHubWebhookAuthenticator>();
         builder.Services.AddScoped<IGitHubWebhookRouter, GitHubWebhookRouter>();
-        builder.Services.AddScoped<IRepositoryPathResolver, RepositoryPathResolver>();
         
         // Webhook handlers
         builder.Services.AddScoped<IWebhookHandler, PingWebhookHandler>();

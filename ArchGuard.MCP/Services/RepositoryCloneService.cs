@@ -33,24 +33,23 @@ public class RepositoryCloneService : IRepositoryCloneService
     {
         try
         {
-            var tempDir = this.CreateTempDirectory(repoFullName, commitOrBranch);
-            this.Logger.LogInformation("Cloning repository {RepoFullName} at {CommitOrBranch} to {TempDir}", 
-                repoFullName, commitOrBranch, tempDir);
+            var windowsTempDirPath = this.CreateTempDirectory(repoFullName, commitOrBranch);
+            var wslTempPath = this.PathConverter.ConvertToWslPath(windowsTempDirPath);
 
-            var cloneResult = await this.CloneWithAuthenticationAsync(cloneUrl, tempDir, commitOrBranch);
+            this.Logger.LogInformation("Cloning repository {RepoFullName} at {CommitOrBranch} to {TempDir}", 
+                repoFullName, commitOrBranch, windowsTempDirPath);
+
+            var cloneResult = await this.CloneWithAuthenticationAsync(cloneUrl, windowsTempDirPath, commitOrBranch);
             
             if (!cloneResult.Success)
             {
                 return cloneResult;
             }
 
-            var codingAgentType = this.GetCodingAgentType();
-            var agentPath = this.PathConverter.ConvertForAgent(tempDir, codingAgentType);
-
             return new CloneResult
             {
-                LocalPath = tempDir,
-                AgentPath = agentPath,
+                WindowsPath = windowsTempDirPath,
+                WslPath = wslTempPath,
                 CommitSha = commitOrBranch,
                 Success = true,
                 ErrorMessage = string.Empty,
@@ -98,17 +97,21 @@ public class RepositoryCloneService : IRepositoryCloneService
         }
     }
 
+    #endregion
+
+    #region Private Methods
+
     private void RemoveReadOnlyAttributes(string directoryPath)
     {
         try
         {
             var dirInfo = new DirectoryInfo(directoryPath);
-            
+
             if (dirInfo.Attributes.HasFlag(FileAttributes.ReadOnly))
             {
                 dirInfo.Attributes &= ~FileAttributes.ReadOnly;
             }
-            
+
             foreach (var file in dirInfo.GetFiles("*", SearchOption.AllDirectories))
             {
                 if (file.Attributes.HasFlag(FileAttributes.ReadOnly))
@@ -116,7 +119,7 @@ public class RepositoryCloneService : IRepositoryCloneService
                     file.Attributes &= ~FileAttributes.ReadOnly;
                 }
             }
-            
+
             foreach (var subDir in dirInfo.GetDirectories("*", SearchOption.AllDirectories))
             {
                 if (subDir.Attributes.HasFlag(FileAttributes.ReadOnly))
@@ -131,16 +134,13 @@ public class RepositoryCloneService : IRepositoryCloneService
         }
     }
 
-    #endregion
-
-    #region Private Methods
-
     private string CreateTempDirectory(string repoFullName, string commitSha)
     {
         var baseTempPath = Path.GetTempPath();
         var sanitizedRepoName = repoFullName.Replace('/', '-').Replace('\\', '-');
         var shortCommitSha = commitSha.Length > 8 ? commitSha.Substring(0, 8) : commitSha;
-        var directoryName = $"{sanitizedRepoName}-{shortCommitSha}";
+        var timestamp = DateTime.UtcNow.ToString("yyyyMMdd-HHmmss-fff");
+        var directoryName = $"{sanitizedRepoName}-{shortCommitSha}-{timestamp}-{Guid.NewGuid().ToString()[..8]}";
         var tempDir = Path.Combine(baseTempPath, "archguard-clones", directoryName);
 
         if (Directory.Exists(tempDir))
@@ -374,19 +374,6 @@ public class RepositoryCloneService : IRepositoryCloneService
         {
             this.Logger.LogWarning("Failed to checkout commit {CommitSha}, repository may be at wrong commit", commitSha);
         }
-    }
-
-    private CodingAgentType GetCodingAgentType()
-    {
-        var agentTypeString = this.Configuration.GetValue("RepositoryCloning:CodingAgentType", "ClaudeCode");
-        
-        if (Enum.TryParse<CodingAgentType>(agentTypeString, ignoreCase: true, out var agentType))
-        {
-            return agentType;
-        }
-
-        this.Logger.LogWarning("Invalid CodingAgentType configured: {AgentType}, defaulting to ClaudeCode", agentTypeString);
-        return CodingAgentType.ClaudeCode;
     }
 
     #endregion
