@@ -1,4 +1,5 @@
 using ArchGuard.MCP.Models;
+using ArchGuard.Shared;
 using System.Diagnostics;
 using System.Text;
 
@@ -67,6 +68,13 @@ public class RepositoryCloneService : IRepositoryCloneService
                 ClonedAt = DateTime.UtcNow
             };
         }
+    }
+
+    public Task<ContextFile[]> GetContextFilesAsync(string commitOrBranch, string repoFullName)
+    {
+        Task.Delay(1);
+
+        return Task.FromResult(Array.Empty<ContextFile>());
     }
 
     public async Task CleanupRepositoryAsync(string clonePath)

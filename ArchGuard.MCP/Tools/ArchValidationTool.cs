@@ -9,6 +9,8 @@ namespace ArchGuard_MCP.Tools;
 [McpServerToolType, Description("I am a C# code analyzer, guardian of architectural guidelines.")]
 public static class ArchValidationTool
 {
+    public static CodingAgent SelectedCodingAgent { get; set; } = CodingAgent.ClaudeCode;
+
     // ARCHGUARD_TEMPLATE_CONSTANT_START
     // TEMPLATE_CHECK_NAME_CONSTANT: DependencyRegistrationMcpToolDescription
     public static string DependencyRegistrationMcpToolDescription = "Validates that all services referenced in constructors are properly registered in the DI container.";
@@ -43,12 +45,17 @@ public static class ArchValidationTool
         try
         {
             var root = await ArchValidationTool.GetRootOrThrowExceptionAsync(server);
-     
-            // Convert MCP root (file:// URI) to both Windows and WSL paths
-            var windowsRoot = ConvertFileUriToWindowsPath(root);
-            var wslRoot = ConvertFileUriToWslPath(root);
 
-            return await ValidationService.ValidateDependencyRegistrationAsync(windowsRoot, wslRoot, contextFiles, diffs);
+            var validationRequest = new ValidationRequest();
+
+            // Convert MCP root (file:// URI) to both Windows and WSL paths
+            validationRequest.WindowsRoot = ConvertFileUriToWindowsPath(root);
+            validationRequest.WslRoot = ConvertFileUriToWslPath(root);
+            validationRequest.ContextFiles = contextFiles;
+            validationRequest.Diffs = diffs;
+            validationRequest.SelectedCodingAgent = ArchValidationTool.SelectedCodingAgent;
+
+            return await ValidationService.ValidateDependencyRegistrationAsync(validationRequest);
         }
         catch (Exception ex)
         {
@@ -82,11 +89,16 @@ public static class ArchValidationTool
         {
             var root = await ArchValidationTool.GetRootOrThrowExceptionAsync(server);
 
-            // Convert MCP root (file:// URI) to both Windows and WSL paths
-            var windowsRoot = ConvertFileUriToWindowsPath(root);
-            var wslRoot = ConvertFileUriToWslPath(root);
+            var validationRequest = new ValidationRequest();
 
-            return await ValidationService.ValidateEntityDtoPropertyMappingAsync(windowsRoot, wslRoot, contextFiles, diffs);
+            // Convert MCP root (file:// URI) to both Windows and WSL paths
+            validationRequest.WindowsRoot = ConvertFileUriToWindowsPath(root);
+            validationRequest.WslRoot = ConvertFileUriToWslPath(root);
+            validationRequest.ContextFiles = contextFiles;
+            validationRequest.Diffs = diffs;
+            validationRequest.SelectedCodingAgent = ArchValidationTool.SelectedCodingAgent;
+
+            return await ValidationService.ValidateEntityDtoPropertyMappingAsync(validationRequest);
         }
         catch (Exception ex)
         {

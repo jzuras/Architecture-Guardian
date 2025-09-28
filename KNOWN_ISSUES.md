@@ -1,4 +1,4 @@
-# Known Issues and Development Notes
+﻿# Known Issues and Development Notes
 
 This document outlines current limitations, development observations, and areas for future improvement in ArchGuard.
 
@@ -24,6 +24,44 @@ This document outlines current limitations, development observations, and areas 
 - **Example**: Unable to properly remove generated code between template markers
 - **Impact**: Gemini CLI will likely fail when running `/create-new-rule` command or template operations
 - **Recommendation**: Use Claude Code for all template system operations
+
+
+### LocalFoundry Hardware Requirements
+**Issue**: LocalFoundry may fail with hardware resource limitations with certain models
+- **Symptoms**:
+  - `Status: 500 (Internal Server Error)` from LocalFoundry API
+  - Loud fan noise indicating high CPU/GPU usage
+  - Validation timeouts or system unresponsiveness
+- **Root Cause**: phi-4-mini model requires significant computational resources
+- **Hardware Impact**: May exceed capabilities of standard development machines
+- **Workarounds**:
+  1. **Test Model Compatibility**: Use LocalFoundry command-line chatbot to test hardware capability
+  2. **Prompt File Testing**: Use validation prompt files (provided in repository) to test locally before relying on automated validation
+  3. **Alternative Models**: Investigate lighter models available in LocalFoundry catalog
+  4. **Fallback Strategy**: Configure system to use ClaudeCode or GeminiCLI when LocalFoundry fails
+- **Testing Approach**: Repository will include sample prompt files for manual LocalFoundry testing
+**Bottom Line**: Not Recommended!
+- **Reason**:
+  - The models that are small enough to run on local hardware (such as qwen2.5-0.5b) are not capable, at this time, of consistently correct analyis or following simple instructions.
+
+### LocalFoundry with MCP Server / Tools
+**Issue**: The MCP Tools' inputs are file names, not file contents, which is insufficient for analyis.
+- **Not Fixed**: The inputs were not corrected because Local Foundry is not suitable for this use case at this time.
+
+### LocalFoundry Validation Accuracy
+**Issue**: Extensive testing revealed significant validation accuracy limitations
+- **Symptoms**:
+  - **Validation accuracy issues**: qwen2.5-0.5b model shows inconsistent results
+  - **False positives and missed violations**: Model easily confused by complex scenarios
+  - **Context sensitivity issues**: Complex C# code scenarios confuse the model
+- **Performance Impact**: 77-82 seconds per validation, sometimes even 7 minutes or more
+- **Technical Status**:
+  - ✅ Race condition handling for concurrent webhook processing
+  - ✅ Robust JSON parsing pipeline for malformed AI responses
+  - ✅ Fresh chat client per validation (no context contamination)
+  - ✅ Complete integration with existing validation workflow
+  - ⚠️ Model accuracy insufficient for reliable architectural validation
+
 
 ## Code Quality Observations
 

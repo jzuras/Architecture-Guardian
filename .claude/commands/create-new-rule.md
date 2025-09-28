@@ -119,71 +119,50 @@ INSTRUCTIONS:
    - Tool Collection: Find `ARCHGUARD_INSERTION_POINT_TOOL_COLLECTION_START` marker
      - Insert new tool variable reference in alphabetical order by rule name
 
-5. UPDATE WEBHOOK HANDLERS USING DETERMINISTIC INSERTION POINTS:
+5. UPDATE WEBHOOK HANDLER BASE CLASS USING DETERMINISTIC INSERTION POINTS:
 
-   **PushWebhookHandler.cs, CheckSuiteWebhookHandler.cs, PullRequestWebhookHandler.cs:**
+   **WebhookHandlerBase.cs (IWebhookHandler.cs file - consolidated architecture):**
 
-   **Phase 1 - CheckExecutionArgs Creation:**
-   - Find `ARCHGUARD_INSERTION_POINT_ARGS_START` marker
-   - Insert new CheckExecutionArgs creation in alphabetical order by rule name:
+   All webhook handlers now use a unified `ExecuteAllChecksAsync()` method in the base class. Individual webhook handlers (PushWebhookHandler.cs, CheckSuiteWebhookHandler.cs, etc.) are simple shells that call the base method and do NOT need modification when adding new rules.
+
+   **Phase 1 - Check Creation Section:**
+   - Find `ARCHGUARD_INSERTION_POINT_CHECK_CREATION_START` marker in WebhookHandlerBase
+   - Insert new check creation block in alphabetical order by rule name:
      ```csharp
      // ARCHGUARD_GENERATED_RULE_START - [NEW_RULE_NAME_PASCAL]
      // Generated from template on: [USER_PROVIDED_GENERATION_DATE]
      // DO NOT EDIT - This code will be regenerated
-     var [ruleName]CheckArgs = new CheckExecutionArgs
+     CheckExecutionArgs [ruleName]CheckArgs = new();
+     long [ruleName]CheckId = 0;
+     if (checkNameFromCheckRun is null || checkNameFromCheckRun.Equals(GitHubCheckService.[RuleName]CheckName, StringComparison.InvariantCultureIgnoreCase))
      {
-         RepoOwner = [...],
-         RepoName = [...],
-         CommitSha = [...],
-         CheckName = ValidationService.[RuleName]CheckName,
-         InstallationId = installationId,
-         ExistingCheckRunId = null,
-         InitialTitle = ValidationService.[RuleName]CheckName,
-         InitialSummary = "Starting " + ValidationService.[RuleName]CheckName + "validation for [context]."
-     };
+         [ruleName]CheckArgs = new CheckExecutionArgs
+         {
+             RepoOwner = repoOwner,
+             RepoName = repoName,
+             CommitSha = commitSha,
+             CheckName = GitHubCheckService.[RuleName]CheckName,
+             InstallationId = installationId,
+             ExistingCheckRunId = checkRunId,
+             InitialTitle = GitHubCheckService.[RuleName]CheckName,
+             InitialSummary = $"Starting {GitHubCheckService.[RuleName]CheckName} validation for '{initialSummaryEndText}'."
+         };
+
+         [ruleName]CheckId = await CheckService.CreateCheckAsync(GitHubCheckService.[RuleName]CheckName, [ruleName]CheckArgs, GitHubClient, GitHubCheckService.[RuleName]DetailsUrlForCheck);
+     }
      // ARCHGUARD_GENERATED_RULE_END - [NEW_RULE_NAME_PASCAL]
      ```
 
-   **Phase 2 - Check Creation (Immediate):**
-   - Find `ARCHGUARD_INSERTION_POINT_CHECK_CREATION_START` marker
-   - Insert new check creation call in alphabetical order by rule name:
-     ```csharp
-     // ARCHGUARD_GENERATED_RULE_START - [NEW_RULE_NAME_PASCAL]
-     // Generated from template on: [USER_PROVIDED_GENERATION_DATE]
-     // DO NOT EDIT - This code will be regenerated
-     var [ruleName]CheckId = await CheckService.CreateCheckAsync(ValidationService.[RuleName]CheckName, [ruleName]CheckArgs, GitHubClient, GitHubCheckService.[RuleName]DetailsUrlForCheck);
-     // ARCHGUARD_GENERATED_RULE_END - [NEW_RULE_NAME_PASCAL]
-     ```
-
-   **Phase 3 - Rule Execution (Background):**
-   - Find `ARCHGUARD_INSERTION_POINT_RULE_EXECUTION_START` marker
+   **Phase 2 - Rule Execution Section:**
+   - Find `ARCHGUARD_INSERTION_POINT_RULE_EXECUTION_START` marker in WebhookHandlerBase
    - Insert new rule execution call in alphabetical order by rule name:
      ```csharp
      // ARCHGUARD_GENERATED_RULE_START - [NEW_RULE_NAME_PASCAL]
      // Generated from template on: [USER_PROVIDED_GENERATION_DATE]
      // DO NOT EDIT - This code will be regenerated
-     await CheckService.Execute[RuleName]CheckAsync([ruleName]CheckArgs, root, installationId, GitHubClient, [ruleName]CheckId);
-     // ARCHGUARD_GENERATED_RULE_END - [NEW_RULE_NAME_PASCAL]
-     ```
-
-   **CheckRunWebhookHandler.cs (Different Pattern):**
-   - Find `ARCHGUARD_INSERTION_POINT_RULE_ROUTING_START` marker
-   - Insert new routing condition in alphabetical order by rule name:
-     ```csharp
-     // ARCHGUARD_GENERATED_RULE_START - [NEW_RULE_NAME_PASCAL]
-     // Generated from template on: [USER_PROVIDED_GENERATION_DATE]
-     // DO NOT EDIT - This code will be regenerated
-     else if (diCheckArgs.CheckName == ValidationService.[RuleName]CheckName)
+     if (checkNameFromCheckRun is null || checkNameFromCheckRun.Equals(GitHubCheckService.[RuleName]CheckName, StringComparison.InvariantCultureIgnoreCase))
      {
-         _ = Task.Run(async () =>
-         {
-             try
-             {
-                 await CheckService.Execute[RuleName]CheckAsync(diCheckArgs, root, installationId, GitHubClient);
-                 // cleanup logic...
-             }
-             catch (Exception ex) { /* error handling */ }
-         });
+         await CheckService.Execute[RuleName]CheckAsync([ruleName]CheckArgs, windowsRoot, wslRoot, installationId, GitHubClient, [ruleName]CheckId, sharedContextFiles, requestBody);
      }
      // ARCHGUARD_GENERATED_RULE_END - [NEW_RULE_NAME_PASCAL]
      ```
@@ -193,11 +172,18 @@ INSTRUCTIONS:
    - Insert new rule in correct alphabetical position by rule name
    - This ensures deterministic ordering regardless of creation sequence
 
-6. UPDATE COLLECTIONS:
+6. UPDATE STRATEGY PATTERN FILES USING DETERMINISTIC INSERTION POINTS:
+
+   **Strategy Pattern Files (ARCHGUARD_INSERTION_POINT_METHODS_START markers):**
+   - **IValidationStrategy.cs**: Insert new method signature in alphabetical order by rule name
+   - **FileSystemValidationStrategy.cs**: Insert new method implementation in alphabetical order by rule name
+   - **ApiValidationStrategy.cs**: Insert new method implementation in alphabetical order by rule name
+
+7. UPDATE COLLECTIONS:
    - Add new tool variable to ToolCollection in Program.cs
    - Ensure proper naming conventions and async patterns
 
-7. MAINTAIN PATTERNS:
+8. MAINTAIN PATTERNS:
    - Follow exact same structure as template
    - Use same error handling patterns
    - Maintain same async patterns and signatures

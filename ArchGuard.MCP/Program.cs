@@ -2,6 +2,7 @@ using ArchGuard.MCP.Services;
 using ArchGuard.MCP.Services.WebhookHandlers;
 using ArchGuard.Shared;
 using ArchGuard_MCP.Tools;
+using Microsoft.AI.Foundry.Local;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.WebUtilities;
@@ -29,7 +30,7 @@ namespace ArchGuard_MCP;
 //  Stateless Mode was turned off so that the MCP Server can query the Client.
 //  Other changes made were specific to the use of my Arch Guard tool (including a namespace/solution/project name change).
 //  AI was allowed to refactor the code, resulting in many more files, classes, interfaces.
-//  The GitHub App code is entirely new to this project.
+//  The GitHub App code is entirely new to this project, as is Local Foundry.
 
 
 public class Program
@@ -158,7 +159,7 @@ public class Program
         var dependencyRegTool = McpServerTool.Create(typeof(ArchValidationTool).GetMethod(nameof(ArchValidationTool.ValidateDependencyRegistrationAsync))!);
         dependencyRegTool.ProtocolTool.Name = nameof(ArchValidationTool.ValidateDependencyRegistrationAsync);
         dependencyRegTool.ProtocolTool.InputSchema = inputSchema;
-        dependencyRegTool.ProtocolTool.Title = "Validate " + ValidationService.DependencyRegistrationCheckName;
+        dependencyRegTool.ProtocolTool.Title = "Validate " + GitHubCheckService.DependencyRegistrationCheckName;
         dependencyRegTool.ProtocolTool.Description = ArchValidationTool.DependencyRegistrationMcpToolDescription;
         // ARCHGUARD_TEMPLATE_TOOL_REGISTRATION_END
 
@@ -171,7 +172,7 @@ public class Program
         var entityDtoPropertyMappingTool = McpServerTool.Create(typeof(ArchValidationTool).GetMethod(nameof(ArchValidationTool.ValidateEntityDtoPropertyMappingAsync))!);
         entityDtoPropertyMappingTool.ProtocolTool.Name = nameof(ArchValidationTool.ValidateEntityDtoPropertyMappingAsync);
         entityDtoPropertyMappingTool.ProtocolTool.InputSchema = inputSchema;
-        entityDtoPropertyMappingTool.ProtocolTool.Title = "Validate " + ValidationService.EntityDtoPropertyMappingCheckName;
+        entityDtoPropertyMappingTool.ProtocolTool.Title = "Validate " + GitHubCheckService.EntityDtoPropertyMappingCheckName;
         entityDtoPropertyMappingTool.ProtocolTool.Description = ArchValidationTool.EntityDtoPropertyMappingMcpToolDescription;
         // ARCHGUARD_GENERATED_RULE_END - ValidateEntityDtoPropertyMapping
 
@@ -233,12 +234,27 @@ public class Program
         var selectedAgent = builder.Configuration.GetValue<string>("RepositoryCloning:CodingAgent", "ClaudeCode");
         if (Enum.TryParse<CodingAgent>(selectedAgent, out var parsedAgent))
         {
-            ValidationService.SelectedCodingAgent = parsedAgent;
+            // Validate LocalFoundry availability if selected
+            if (parsedAgent == CodingAgent.LocalFoundry)
+            {
+                var foundryAvailable = await CheckLocalFoundryAvailabilityAsync();
+                if (!foundryAvailable)
+                {
+                    Console.ForegroundColor = ConsoleColor.Yellow;
+                    Console.WriteLine("LocalFoundry selected but not available. Falling back to ClaudeCode.");
+                    Console.ResetColor();
+                    parsedAgent = CodingAgent.ClaudeCode;
+                }
+            }
+
+            WebhookHandlerBase.SelectedCodingAgent = parsedAgent;
+            GitHubCheckService.SelectedCodingAgent = parsedAgent;
+            ArchValidationTool.SelectedCodingAgent = parsedAgent;
         }
-        Console.WriteLine("Selected Agent: " + parsedAgent);
 
         // Github services
         builder.Services.AddTransient<GitHubCheckService>();
+        builder.Services.AddScoped<IGitHubFileContentService, GitHubFileContentService>();
         builder.Services.AddSingleton<GitHubAppAuthService>();
         builder.Services.AddSingleton<IGitHubClient>(sp =>
         {
@@ -861,6 +877,30 @@ public class Program
             var rsa = RSA.Create(2048);
             File.WriteAllText(keyFile, rsa.ToXmlString(true));
             return rsa;
+        }
+    }
+
+    private static async Task<bool> CheckLocalFoundryAvailabilityAsync()
+    {
+        try
+        {
+            Console.WriteLine("Checking LocalFoundry availability...");
+
+            // Try to initialize FoundryLocalManager to see if LocalFoundry is installed and functional
+            var alias = ApiValidationStrategy.LocalFoundryModelAlias; // Use the same model we attempt to use in validation
+            var manager = await FoundryLocalManager.StartModelAsync(aliasOrModelId: alias);
+
+            // If we get here without exception, LocalFoundry is available
+            Console.WriteLine("LocalFoundry is available and functional.");
+            return true;
+        }
+        catch (Exception ex)
+        {
+            Console.ForegroundColor = ConsoleColor.Red;
+            Console.WriteLine($"LocalFoundry not available: {ex.Message}");
+            Console.WriteLine("This may indicate LocalFoundry is not installed, the model is not available, or hardware requirements are not met.");
+            Console.ResetColor();
+            return false;
         }
     }
     #endregion

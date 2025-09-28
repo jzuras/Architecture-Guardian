@@ -1,17 +1,31 @@
 using ArchGuard.MCP.Models;
-using ArchGuard.Shared;
 using Octokit;
 using System.Text.Json;
 
 namespace ArchGuard.MCP.Services.WebhookHandlers;
+
+//  Different Re-Run Triggers:
+//  1. "Re-run all checks" -> Calls check_suite webhook
+//  2. "Re-run failed checks" -> Calls check_run webhook for each failed check
+//  3. Individual check "Re-run" -> Calls check_run webhook for that specific check
+//
+// Specifically for Check Run callbacks:
+//
+// Each rule execution happens in isolation because:
+//  - GitHub sends separate webhooks for each check run re-run
+//  - Each webhook is handled independently
+//  - The handler doesn't know if other checks will be re-run
+//
+//  Clone sharing would require:
+//  - Coordinating multiple separate webhook calls
+//  - Complex state management to detect "batch re-runs"
+//  - Timing logic to wait for all expected webhooks
 
 public class CheckRunWebhookHandler : WebhookHandlerBase
 {
     public override string EventType => "check_run";
     
     private ILogger<CheckRunWebhookHandler> Logger { get; set; }
-    private IRepositoryCloneService CloneService { get; set; }
-    private IConfiguration Configuration { get; set; }
 
     public CheckRunWebhookHandler(
         GitHubCheckService checkService,
@@ -19,12 +33,11 @@ public class CheckRunWebhookHandler : WebhookHandlerBase
         IGitHubClient githubClient,
         IRepositoryCloneService cloneService,
         IConfiguration configuration,
+        IGitHubFileContentService fileContentService,
         ILogger<CheckRunWebhookHandler> logger)
-        : base(checkService, authService, githubClient)
+        : base(checkService, authService, githubClient, cloneService, configuration, fileContentService)
     {
         this.Logger = logger;
-        this.CloneService = cloneService;
-        this.Configuration = configuration;
     }
 
     public override async Task<IResult> HandleAsync(string requestBody, long installationId, string deliveryId)
@@ -40,15 +53,34 @@ public class CheckRunWebhookHandler : WebhookHandlerBase
             }
 
             // Authenticate with GitHub
-            var installationToken = await AuthService.GetInstallationTokenAsync(installationId);
-            GitHubClient.Connection.Credentials = new Credentials(installationToken, AuthenticationType.Bearer);
+            await AuthenticateWithGitHubAsync(installationId);
 
-            return checkRunPayload.Action.ToLowerInvariant() switch
+            // Handle and return for info-only actions.
+            if (checkRunPayload.Action.ToLowerInvariant() == "requested_action")
             {
-                "rerequested" => await HandleRerequestedAsync(checkRunPayload, installationId),
-                "requested_action" => HandleRequestedAction(checkRunPayload),
-                _ => HandleInformationalAction(checkRunPayload)
-            };
+                return HandleRequestedAction(checkRunPayload);
+            }
+            else if (checkRunPayload.Action.ToLowerInvariant() != "rerequested")
+            {
+                return HandleInformationalAction(checkRunPayload);
+            }
+
+            this.Logger.LogInformation("Check run '{CheckName}' (ID: {CheckRunId}) was rerequested by user ({SenderLogin}).",
+                checkRunPayload.CheckRun.Name, checkRunPayload.CheckRun.Id, checkRunPayload.Sender.Login);
+
+            return await ExecuteAllChecksAsync(
+                repoOwner: checkRunPayload.Repository.Owner.Login,
+                repoName: checkRunPayload.Repository.Name,
+                commitSha: checkRunPayload.CheckRun.HeadSha,
+                installationId: installationId,
+                checkRunId: checkRunPayload.CheckRun.Id,
+                initialSummaryEndText: "re-validation",
+                cloneUrl: checkRunPayload.Repository.CloneUrl,
+                repoFullName: checkRunPayload.Repository.FullName,
+                requestBody: requestBody,
+                eventTypeForLogMessages: "Check Run",
+                logger: this.Logger,
+                checkNameFromCheckRun: checkRunPayload.CheckRun.Name); // this param forces a single check to be run instead of all checks
         }
         catch (JsonException ex)
         {
@@ -62,105 +94,10 @@ public class CheckRunWebhookHandler : WebhookHandlerBase
         }
     }
 
-    private async Task<IResult> HandleRerequestedAsync(GitHubCheckRunWebhookPayload checkRunPayload, long installationId)
-    {
-        // Clone repository directly to get both path formats
-        var cloneResult = await CloneService.CloneRepositoryAsync(
-            checkRunPayload.Repository.CloneUrl,
-            checkRunPayload.CheckRun.HeadSha,
-            checkRunPayload.Repository.FullName);
-
-        if (!cloneResult.Success)
-        {
-            this.Logger.LogError("Failed to clone repository: {ErrorMessage}", cloneResult.ErrorMessage);
-            return Results.Problem("Failed to clone repository");
-        }
-
-        var diCheckArgs = new CheckExecutionArgs
-        {
-            RepoOwner = checkRunPayload.Repository.Owner.Login,
-            RepoName = checkRunPayload.Repository.Name,
-            CommitSha = checkRunPayload.CheckRun.HeadSha,
-            CheckName = checkRunPayload.CheckRun.Name,
-            InstallationId = installationId,
-            ExistingCheckRunId = checkRunPayload.CheckRun.Id,
-            InitialTitle = checkRunPayload.CheckRun.Output?.Title ?? checkRunPayload.CheckRun.Name,
-            InitialSummary = checkRunPayload.CheckRun.Output?.Summary ?? $"Re-running {checkRunPayload.CheckRun.Name}..."
-        };
-
-        // Route to appropriate check based on name
-        if (diCheckArgs.CheckName == ValidationService.DependencyRegistrationCheckName)
-        {
-            // Fire-and-forget: Intentionally not awaited to allow immediate return
-            // The Task.Run executes async Octokit operations in background
-            _ = Task.Run(async () =>
-            {
-                try
-                {
-                    // ARCHGUARD_TEMPLATE_WEBHOOK_RULE_START
-                    await CheckService.ExecuteDepInjectionCheckAsync(diCheckArgs, cloneResult.WindowsPath, cloneResult.WslPath, installationId, GitHubClient);
-                    // ARCHGUARD_TEMPLATE_WEBHOOK_RULE_END
-
-                    // Clean up repository after validation if configured to do so
-                    var cleanupAfterValidation = this.Configuration.GetValue("RepositoryCloning:CleanupAfterValidation", true);
-                    if (cleanupAfterValidation)
-                    {
-                        this.Logger.LogInformation("Cleaning up repository after validation: {RepoFullName} at {CommitSha}",
-                            checkRunPayload.Repository.FullName, checkRunPayload.CheckRun.HeadSha);
-
-                        await this.CloneService.CleanupRepositoryAsync(cloneResult.WindowsPath);
-                    }
-                }
-                catch (Exception ex)
-                {
-                    this.Logger.LogError(ex, "Error during validation or cleanup for {RepoFullName}", checkRunPayload.Repository.FullName);
-                }
-            });
-        }
-        // ARCHGUARD_INSERTION_POINT_RULE_ROUTING_START
-        // New rule routing conditions go here in alphabetical order by rule name
-        // Format: else if (diCheckArgs.CheckName == RuleCheckName) { ... }
-
-        // ARCHGUARD_GENERATED_RULE_START - ValidateEntityDtoPropertyMapping
-        // Generated from template on: 9/17/25
-        // DO NOT EDIT - This code will be regenerated
-        else if (diCheckArgs.CheckName == ValidationService.EntityDtoPropertyMappingCheckName)
-        {
-            _ = Task.Run(async () =>
-            {
-                try
-                {
-                    await CheckService.ExecuteEntityDtoPropertyMappingCheckAsync(diCheckArgs, cloneResult.WindowsPath, cloneResult.WslPath, installationId, GitHubClient);
-
-                    // Clean up repository after validation if configured to do so
-                    var cleanupAfterValidation = this.Configuration.GetValue("RepositoryCloning:CleanupAfterValidation", true);
-                    if (cleanupAfterValidation)
-                    {
-                        this.Logger.LogInformation("Cleaning up repository after validation: {RepoFullName} at {CommitSha}",
-                            checkRunPayload.Repository.FullName, checkRunPayload.CheckRun.HeadSha);
-
-                        await this.CloneService.CleanupRepositoryAsync(cloneResult.WindowsPath);
-                    }
-                }
-                catch (Exception ex)
-                {
-                    this.Logger.LogError(ex, "Error during validation or cleanup for {RepoFullName}", checkRunPayload.Repository.FullName);
-                }
-            });
-        }
-        // ARCHGUARD_GENERATED_RULE_END - ValidateEntityDtoPropertyMapping
-
-        // ARCHGUARD_INSERTION_POINT_RULE_ROUTING_END
-        else
-        {
-            this.Logger.LogWarning("Received rerequested action for unknown check name: {CheckName}", diCheckArgs.CheckName);
-        }
-
-        return Results.Accepted("Check run rerequest initiated");
-    }
-
     private IResult HandleRequestedAction(GitHubCheckRunWebhookPayload checkRunPayload)
     {
+        // This is only for custom action buttons. Not used in this project.
+
         var actionIdentifier = checkRunPayload.RequestedAction?.Identifier ?? "Unknown_Action_Identifier";
 
         this.Logger.LogInformation("Check run '{CheckName}' (ID: {CheckRunId}) received requested_action with Identifier: '{ActionId}'",
@@ -177,5 +114,4 @@ public class CheckRunWebhookHandler : WebhookHandlerBase
 
         return Results.Ok("Check run event acknowledged");
     }
-
 }

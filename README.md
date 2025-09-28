@@ -11,13 +11,15 @@ https://www.linkedin.com/feed/update/urn:li:activity:7370622737263894528/
 https://www.linkedin.com/feed/update/urn:li:activity:7371608592623312896/  
 https://www.linkedin.com/feed/update/urn:li:activity:7373155482225647616/  
 https://www.linkedin.com/feed/update/urn:li:activity:7374811981289103360/  
+https://www.linkedin.com/feed/update/urn:li:activity:7378160986584670208/  
+
 ## Overview
 
 ArchGuard operates in two modes:
 1. **MCP Server Mode**: AI agents (GitHub CoPiliot in VS and VS Code) can call validation tools directly
 2. **GitHub Webhook Mode**: Automated validation triggered by GitHub events (push, pull requests, check runs)
 
-Both modes use the same core validation logic that spawns an AI Agent to analyze C# projects for 
+Both modes use the same core validation logic that spawns an AI Agent (ClaudeCode, GeminiCLI, or LocalFoundry) to analyze C# projects for
 dependency injection issues or any other rules defined.
 
 ## Key Features
@@ -73,7 +75,7 @@ Update `appsettings.json`:
     "PrivateKeyFilePath": "path/to/private-key.pem"
   },
   "RepositoryCloning": {
-    "CodingAgent": "ClaudeCode",
+    "CodingAgent": "ClaudeCode",      // Options: "ClaudeCode", "GeminiCLI", "LocalFoundry" (not recommended - see LocalFoundry section)
     "CleanupIntervalMinutes": 60,
     "MaxRetentionHours": 2,
     "CleanupAfterValidation": true
@@ -109,7 +111,7 @@ dotnet run
 ### How It Works
 
 1. **Repository Access**: Clones GitHub repository to temporary directory, or accesses local directory when called via MCP.
-2. **Analysis**: Spawns Claude Code process to analyze the project
+2. **Analysis**: Spawns AI agent process (ClaudeCode, GeminiCLI, or LocalFoundry) to analyze the project
 3. **Results**: Returns JSON with validation results, violations, and explanations
 4. **Cleanup**: Removes temporary repository (immediate or background)
 
@@ -204,11 +206,32 @@ See Original Enphase MCP Server Project README for additional OAuth server and M
 ## Known Limitations
 
 - **Gemini CLI reliability**: Output may occasionally disappear during validation
+- **LocalFoundry integration**: Not recommended for production use due to accuracy limitations (see LocalFoundry section below)
 - **Debug logging**: Extensive console output during active development
 - **Context/diffs**: Currently logged but not actively used in validation logic
 - **DI rule scope**: Only validates constructor dependencies (not property injection, etc.)
 
 For detailed technical issues and development notes, see [KNOWN_ISSUES.md](KNOWN_ISSUES.md).
+
+## LocalFoundry Integration Discussion
+
+**Status**: Available but not recommended. (See KNOWN_ISSUES.md)
+
+LocalFoundry (Microsoft's local AI runtime) has been integrated as a third AI agent option alongside ClaudeCode and GeminiCLI. See [KNOWN_ISSUES.md](KNOWN_ISSUES.md) for detailed technical limitations and accuracy concerns.
+
+### Setup (if using LocalFoundry)
+
+If you wish to experiment with LocalFoundry:
+
+1. **Install LocalFoundry**: Follow Microsoft's [Getting Started with LocalFoundry](https://learn.microsoft.com/en-us/azure/ai-foundry/foundry-local/get-started) guide
+
+2. **Pre-download the model** (recommended before running ArchGuard):
+   ```
+   foundry model run qwen2.5-0.5b
+   ```
+   This downloads the model locally and can take significant time on first run. Running this command first prevents timeouts during ArchGuard startup.
+
+3. **Test your setup**: Use the LocalFoundry command-line chatbot or [AI Studio for VS Code](https://learn.microsoft.com/en-us/azure/ai-foundry/foundry-local/concepts/foundry-local-architecture) to directly chat with the model to test performance.
 
 ## Copyright and License
 

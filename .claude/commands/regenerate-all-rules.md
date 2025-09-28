@@ -90,18 +90,25 @@ INSTRUCTIONS:
    - Tool Registration: Copy template registration pattern, change only variable names and constant references
    - Tool Collection: Update collection reference in alphabetical order
 
-4. UPDATE WEBHOOK HANDLERS:
-   Find and regenerate all webhook handler sections using template patterns:
+4. UPDATE WEBHOOK HANDLER BASE CLASS:
+   Find and regenerate all webhook sections in the consolidated base class:
 
-   **PushWebhookHandler.cs, CheckSuiteWebhookHandler.cs, PullRequestWebhookHandler.cs:**
-   - Args Creation: Copy template pattern in ARCHGUARD_INSERTION_POINT_ARGS_START section
+   **WebhookHandlerBase.cs (IWebhookHandler.cs file - consolidated architecture):**
    - Check Creation: Copy template pattern in ARCHGUARD_INSERTION_POINT_CHECK_CREATION_START section
    - Rule Execution: Copy template pattern in ARCHGUARD_INSERTION_POINT_RULE_EXECUTION_START section
 
-   **CheckRunWebhookHandler.cs:**
-   - Rule Routing: Copy template pattern in ARCHGUARD_INSERTION_POINT_RULE_ROUTING_START section
+   **IMPORTANT - NO INDIVIDUAL WEBHOOK HANDLER MODIFICATION:**
+   Individual webhook handlers (PushWebhookHandler.cs, CheckSuiteWebhookHandler.cs, PullRequestWebhookHandler.cs, CheckRunWebhookHandler.cs) are simple shells that call ExecuteAllChecksAsync() and do NOT need modification during rule regeneration.
 
-5. CRITICAL - DETERMINISTIC PLACEMENT VERIFICATION:
+5. UPDATE STRATEGY PATTERN FILES:
+   Find and regenerate all strategy pattern implementations:
+
+   **Strategy Pattern Files (ARCHGUARD_INSERTION_POINT_METHODS_START sections):**
+   - **IValidationStrategy.cs**: Regenerate method signatures using template pattern
+   - **FileSystemValidationStrategy.cs**: Regenerate method implementations using template pattern
+   - **ApiValidationStrategy.cs**: Regenerate method implementations using template pattern
+
+6. CRITICAL - DETERMINISTIC PLACEMENT VERIFICATION:
    - Replace ONLY code between ARCHGUARD_GENERATED_RULE_START/END markers (preserve markers)
    - **MANDATORY**: Ensure ALL generated code blocks include complete generation markers with metadata lines:
      ```csharp
@@ -137,10 +144,10 @@ FILES TO MODIFY:
 - ArchGuard.Shared/ValidationService.cs (constants + methods)
 - ArchGuard.MCP/Services/GitHubCheckService.cs (constants + methods)
 - ArchGuard.MCP/Program.cs (tool registration + collection)
-- ArchGuard.MCP/Services/WebhookHandlers/PushWebhookHandler.cs (args + creation + execution)
-- ArchGuard.MCP/Services/WebhookHandlers/CheckSuiteWebhookHandler.cs (args + creation + execution)
-- ArchGuard.MCP/Services/WebhookHandlers/PullRequestWebhookHandler.cs (args + creation + execution)
-- ArchGuard.MCP/Services/WebhookHandlers/CheckRunWebhookHandler.cs (routing)
+- ArchGuard.MCP/Services/WebhookHandlers/IWebhookHandler.cs (WebhookHandlerBase consolidation - check creation + execution)
+- ArchGuard.Shared/IValidationStrategy.cs (method signatures)
+- ArchGuard.Shared/FileSystemValidationStrategy.cs (method implementations)
+- ArchGuard.Shared/ApiValidationStrategy.cs (method implementations)
 
 EXAMPLE - ValidateEntityDtoPropertyMapping Regeneration:
 - Extract existing constants: EntityDtoPropertyMappingMcpToolDescription value, etc.

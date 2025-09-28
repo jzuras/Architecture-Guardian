@@ -1,7 +1,4 @@
-using System.Diagnostics;
-using System.Text;
 using System.Text.Json;
-using System.Text.RegularExpressions;
 
 namespace ArchGuard.Shared;
 
@@ -25,19 +22,16 @@ namespace ArchGuard.Shared;
 public enum CodingAgent
 {
     ClaudeCode,
-    GeminiCli
+    GeminiCli,
+    LocalFoundry
 }
 
 public static class ValidationService
 {
-    private static JsonSerializerOptions WriteIndentedJsonSerializerOptions { get; set; } = new JsonSerializerOptions { WriteIndented = true };
-    public static CodingAgent SelectedCodingAgent { get; set; } = CodingAgent.ClaudeCode;
+    internal static JsonSerializerOptions WriteIndentedJsonSerializerOptions { get; set; } = new JsonSerializerOptions { WriteIndented = true };
 
     // ARCHGUARD_TEMPLATE_CONSTANT_START
-    // TEMPLATE_CHECK_NAME_CONSTANT: DependencyRegistrationCheckName
-    public static string DependencyRegistrationCheckName { get; } = "Dependency Registration";
-
-    // TEMPLATE_CHECK_NAME_CONSTANT: DependencyRegistrationCheckName
+    // TEMPLATE_CHECK_NAME_CONSTANT: DependencyRegistrationAiAgentInstructions
     public static string DependencyRegistrationAiAgentInstructions { get; } = "Validate Dependency Registration rule: Check that all services referenced in constructors are properly registered in the DI container.";
     // ARCHGUARD_TEMPLATE_CONSTANT_END
 
@@ -47,179 +41,20 @@ public static class ValidationService
     // ARCHGUARD_GENERATED_RULE_START - ValidateEntityDtoPropertyMapping
     // Generated from template on: 9/17/25
     // DO NOT EDIT - This code will be regenerated
-    public static string EntityDtoPropertyMappingCheckName { get; } = "EntityDtoPropertyMapping";
-
     public static string EntityDtoPropertyMappingAiAgentInstructions { get; } = "Analyze this codebase for Entity-DTO property mapping violations. Look for DTO classes that have mismatched property names, missing properties, or inconsistent data types compared to their corresponding domain entities. Report any DTOs where properties don't properly align with their entity counterparts (e.g., 'Id' vs 'UserId', missing required properties, or renamed properties that break mapping conventions).";
     // ARCHGUARD_GENERATED_RULE_END - ValidateEntityDtoPropertyMapping
 
     // ARCHGUARD_INSERTION_POINT_CONSTANTS_END
 
     // ARCHGUARD_TEMPLATE_RULE_START
-    // TEMPLATE_METHOD_NAME: ValidateDependencyRegistrationAsync
-    public static async Task<string> ValidateDependencyRegistrationAsync(string windowsRoot, string wslRoot, ContextFile[] contextFiles, string[]? diffs = null)
+    public static async Task<string> ValidateDependencyRegistrationAsync(ValidationRequest request)
     {
         try
         {
-            // Write inputs to file for debugging.
-            var debugData = new
-            {
-                contextFiles = contextFiles.Select(cf => new
-                {
-                    cf.FilePath,
-                }).ToArray(),
-                diffs = diffs ?? Array.Empty<string>(),
-                timestamp = DateTime.Now
-            };
+            // Use strategy pattern for validation
+            var strategy = GetValidationStrategy(request.SelectedCodingAgent);
 
-            string debugJson = JsonSerializer.Serialize(debugData, ValidationService.WriteIndentedJsonSerializerOptions);
-            Console.WriteLine(debugJson);
-            
-            string agentResponse;
-
-            #region Call AI Agent to handle validation.
-            // Create prompt content.
-            var promptBuilder = new StringBuilder();
-            promptBuilder.AppendLine(ValidationService.DependencyRegistrationAiAgentInstructions);
-            promptBuilder.AppendLine("Do not include commented-out code in your evaluation. Do not even mention it.");
-            promptBuilder.AppendLine("Do not use any external tools, but you may read files as needed.");
-
-            if (diffs is not null && diffs.Length > 0)
-            {
-                promptBuilder.AppendLine();
-                promptBuilder.AppendLine("Pay special attention to these recent changes:");
-                foreach (var diff in diffs)
-                {
-                    promptBuilder.AppendLine($"```diff");
-                    promptBuilder.AppendLine(diff);
-                    promptBuilder.AppendLine("```");
-                }
-            }
-
-            promptBuilder.AppendLine();
-            if (ValidationService.SelectedCodingAgent == CodingAgent.ClaudeCode)
-            {
-                promptBuilder.AppendLine("IMPORTANT: You have Write tool permission, but ONLY use it to write the output file 'output.tmp' in the current directory.");
-                promptBuilder.AppendLine("DO NOT modify, create, or overwrite any source code files. Only write to 'output.tmp'.");
-                promptBuilder.AppendLine("Write your response to a file named 'output.tmp' in the current directory using the Write tool.");
-            }
-            promptBuilder.AppendLine("Return JSON format: {\"passed\": bool, \"violations\": [{\"file\": \"path\", \"line\": number, \"message\": \"description\"}], \"explanation\": \"detailed explanation\"}");
-            promptBuilder.AppendLine("Your entire response must be valid JSON that can be parsed directly. Do not include any text before or after the JSON.");
-
-            // Write prompt to temp file.
-            var tempPromptFile = Path.GetTempFileName();
-            await File.WriteAllTextAsync(tempPromptFile, promptBuilder.ToString());
-
-            try
-            {
-                // Call AI Agent.
-                string command;
-                string workingDirectory;
-                string tempPath;
-
-                if (ValidationService.SelectedCodingAgent == CodingAgent.ClaudeCode)
-                {
-                    tempPath = ConvertToWslPath(tempPromptFile);
-                    workingDirectory = wslRoot;
-                    command = $"wsl bash -i -c \"cd {workingDirectory} && touch output.tmp && claude --print --allowed-tools 'Read Write Edit' < {tempPath}; echo '__AGENT_COMPLETE__'\"";
-                }
-                else if (ValidationService.SelectedCodingAgent == CodingAgent.GeminiCli)
-                {
-                    tempPath = tempPromptFile;
-                    workingDirectory = windowsRoot;
-                    command = $"cd /d \"{workingDirectory}\" && echo. > output.tmp && gemini --model gemini-2.5-flash --prompt < \"{tempPath}\" > output.tmp && echo '__AGENT_COMPLETE__'";
-                }
-                else
-                {
-                    // Default fallback
-                    tempPath = tempPromptFile;
-                    workingDirectory = windowsRoot;
-                    command = $"cmd /c \"cd /d \"{workingDirectory}\" && echo. > output.tmp && echo 'Agent {ValidationService.SelectedCodingAgent} not yet implemented' > output.tmp && echo '__AGENT_COMPLETE__'\"";
-                }
-
-                Console.WriteLine("agent command is " + command);
-
-                var processInfo = new ProcessStartInfo
-                {
-                    FileName = "cmd.exe",
-                    Arguments = $"/c {command}",
-                    RedirectStandardOutput = true,
-                    RedirectStandardError = true,
-                    UseShellExecute = false,
-                    CreateNoWindow = true
-                };
-
-                using var process = Process.Start(processInfo);
-                if (process is null)
-                {
-                    return JsonSerializer.Serialize(new
-                    {
-                        passed = false,
-                        explanation = "Failed to start agent process"
-                    });
-                }
-
-                // Wait for process to complete before reading output
-                await process.WaitForExitAsync();
-                agentResponse = await process.StandardOutput.ReadToEndAsync();
-                var errorOutput = await process.StandardError.ReadToEndAsync();
-
-                if (process.ExitCode != 0)
-                {
-                    return JsonSerializer.Serialize(new
-                    {
-                        passed = false,
-                        explanation = $"Agent error: {errorOutput}"
-                    });
-                }
-
-                Console.WriteLine();
-                Console.WriteLine($"Raw agent response length: {agentResponse?.Length ?? 0}");
-                Console.WriteLine($"Raw agent response: '{agentResponse}'");
-
-                // Check for completion marker
-                if (agentResponse?.Contains("__AGENT_COMPLETE__") == true)
-                {
-                    Console.WriteLine("SUCCESS: Found completion marker - agent finished execution");
-
-                    // Read the actual JSON response from the output file
-                    var outputPath = Path.Combine(windowsRoot, "output.tmp");
-                    if (File.Exists(outputPath))
-                    {
-                        agentResponse = await File.ReadAllTextAsync(outputPath);
-                        Console.WriteLine($"File output length: {agentResponse?.Length ?? 0}");
-                        Console.WriteLine($"File output content: '{agentResponse}'");
-
-                        // Clean up the output file
-                        File.Delete(outputPath);
-                    }
-                    else
-                    {
-                        Console.WriteLine("ERROR: Output file not found - agent may not have written to file");
-                        agentResponse = string.Empty;
-                    }
-                }
-                else
-                {
-                    Console.WriteLine("WARNING: Completion marker not found - agent execution may be incomplete");
-                    agentResponse = string.Empty;
-                }
-
-                var json = ExtractJsonFromResponse(agentResponse ?? string.Empty);
-
-                Console.WriteLine();
-                Console.WriteLine("returning this json: " + json);
-
-                return JsonSerializer.Serialize(json, ValidationService.WriteIndentedJsonSerializerOptions);
-            }
-            finally
-            {
-                // Delete temp file.
-                if (File.Exists(tempPromptFile))
-                {
-                    File.Delete(tempPromptFile);
-                }
-            }            
-            #endregion
+            return await strategy.ValidateDependencyRegistrationAsync(request);
         }
         catch (Exception ex)
         {
@@ -235,170 +70,14 @@ public static class ValidationService
     // ARCHGUARD_GENERATED_RULE_START - ValidateEntityDtoPropertyMapping
     // Generated from template on: 9/17/25
     // DO NOT EDIT - This code will be regenerated
-    public static async Task<string> ValidateEntityDtoPropertyMappingAsync(string windowsRoot, string wslRoot, ContextFile[] contextFiles, string[]? diffs = null)
+    public static async Task<string> ValidateEntityDtoPropertyMappingAsync(ValidationRequest request)
     {
         try
         {
-            // Write inputs to file for debugging.
-            var debugData = new
-            {
-                contextFiles = contextFiles.Select(cf => new
-                {
-                    cf.FilePath,
-                }).ToArray(),
-                diffs = diffs ?? Array.Empty<string>(),
-                timestamp = DateTime.Now
-            };
+            // Use strategy pattern for validation
+            var strategy = GetValidationStrategy(request.SelectedCodingAgent);
 
-            string debugJson = JsonSerializer.Serialize(debugData, ValidationService.WriteIndentedJsonSerializerOptions);
-            Console.WriteLine(debugJson);
-
-            string agentResponse;
-
-            #region Call AI Agent to handle validation.
-            // Create prompt content.
-            var promptBuilder = new StringBuilder();
-            promptBuilder.AppendLine(ValidationService.EntityDtoPropertyMappingAiAgentInstructions);
-            promptBuilder.AppendLine("Do not include commented-out code in your evaluation. Do not even mention it.");
-            promptBuilder.AppendLine("Do not use any external tools, but you may read files as needed.");
-
-            if (diffs is not null && diffs.Length > 0)
-            {
-                promptBuilder.AppendLine();
-                promptBuilder.AppendLine("Pay special attention to these recent changes:");
-                foreach (var diff in diffs)
-                {
-                    promptBuilder.AppendLine($"```diff");
-                    promptBuilder.AppendLine(diff);
-                    promptBuilder.AppendLine("```");
-                }
-            }
-
-            promptBuilder.AppendLine();
-            if (ValidationService.SelectedCodingAgent == CodingAgent.ClaudeCode)
-            {
-                promptBuilder.AppendLine("IMPORTANT: You have Write tool permission, but ONLY use it to write the output file 'output.tmp' in the current directory.");
-                promptBuilder.AppendLine("DO NOT modify, create, or overwrite any source code files. Only write to 'output.tmp'.");
-                promptBuilder.AppendLine("Write your response to a file named 'output.tmp' in the current directory using the Write tool.");
-            }
-            promptBuilder.AppendLine("Return JSON format: {\"passed\": bool, \"violations\": [{\"file\": \"path\", \"line\": number, \"message\": \"description\"}], \"explanation\": \"detailed explanation\"}");
-            promptBuilder.AppendLine("Your entire response must be valid JSON that can be parsed directly. Do not include any text before or after the JSON.");
-
-            // Write prompt to temp file.
-            var tempPromptFile = Path.GetTempFileName();
-            await File.WriteAllTextAsync(tempPromptFile, promptBuilder.ToString());
-
-            try
-            {
-                // Call AI Agent.
-                string command;
-                string workingDirectory;
-                string tempPath;
-
-                if (ValidationService.SelectedCodingAgent == CodingAgent.ClaudeCode)
-                {
-                    tempPath = ConvertToWslPath(tempPromptFile);
-                    workingDirectory = wslRoot;
-                    command = $"wsl bash -i -c \"cd {workingDirectory} && touch output.tmp && claude --print --allowed-tools 'Read Write Edit' < {tempPath}; echo '__AGENT_COMPLETE__'\"";
-                }
-                else if (ValidationService.SelectedCodingAgent == CodingAgent.GeminiCli)
-                {
-                    tempPath = tempPromptFile;
-                    workingDirectory = windowsRoot;
-                    command = $"cd /d \"{workingDirectory}\" && echo. > output.tmp && gemini --model gemini-2.5-flash --prompt < \"{tempPath}\" > output.tmp && echo '__AGENT_COMPLETE__'";
-                }
-                else
-                {
-                    // Default fallback
-                    tempPath = tempPromptFile;
-                    workingDirectory = windowsRoot;
-                    command = $"cmd /c \"cd /d \"{workingDirectory}\" && echo. > output.tmp && echo 'Agent {ValidationService.SelectedCodingAgent} not yet implemented' > output.tmp && echo '__AGENT_COMPLETE__'\"";
-                }
-
-                Console.WriteLine("agent command is " + command);
-
-                var processInfo = new ProcessStartInfo
-                {
-                    FileName = "cmd.exe",
-                    Arguments = $"/c {command}",
-                    RedirectStandardOutput = true,
-                    RedirectStandardError = true,
-                    UseShellExecute = false,
-                    CreateNoWindow = true
-                };
-
-                using var process = Process.Start(processInfo);
-                if (process is null)
-                {
-                    return JsonSerializer.Serialize(new
-                    {
-                        passed = false,
-                        explanation = "Failed to start agent process"
-                    });
-                }
-
-                // Wait for process to complete before reading output
-                await process.WaitForExitAsync();
-                agentResponse = await process.StandardOutput.ReadToEndAsync();
-                var errorOutput = await process.StandardError.ReadToEndAsync();
-
-                if (process.ExitCode != 0)
-                {
-                    return JsonSerializer.Serialize(new
-                    {
-                        passed = false,
-                        explanation = $"Agent error: {errorOutput}"
-                    });
-                }
-
-                Console.WriteLine();
-                Console.WriteLine($"Raw agent response length: {agentResponse?.Length ?? 0}");
-                Console.WriteLine($"Raw agent response: '{agentResponse}'");
-
-                // Check for completion marker
-                if (agentResponse?.Contains("__AGENT_COMPLETE__") == true)
-                {
-                    Console.WriteLine("SUCCESS: Found completion marker - agent finished execution");
-
-                    // Read the actual JSON response from the output file
-                    var outputPath = Path.Combine(windowsRoot, "output.tmp");
-                    if (File.Exists(outputPath))
-                    {
-                        agentResponse = await File.ReadAllTextAsync(outputPath);
-                        Console.WriteLine($"File output length: {agentResponse?.Length ?? 0}");
-                        Console.WriteLine($"File output content: '{agentResponse}'");
-
-                        // Clean up the output file
-                        File.Delete(outputPath);
-                    }
-                    else
-                    {
-                        Console.WriteLine("ERROR: Output file not found - agent may not have written to file");
-                        agentResponse = string.Empty;
-                    }
-                }
-                else
-                {
-                    Console.WriteLine("WARNING: Completion marker not found - agent execution may be incomplete");
-                    agentResponse = string.Empty;
-                }
-
-                var json = ExtractJsonFromResponse(agentResponse ?? string.Empty);
-
-                Console.WriteLine();
-                Console.WriteLine("returning this json: " + json);
-
-                return JsonSerializer.Serialize(json, ValidationService.WriteIndentedJsonSerializerOptions);
-            }
-            finally
-            {
-                // Delete temp file.
-                if (File.Exists(tempPromptFile))
-                {
-                    File.Delete(tempPromptFile);
-                }
-            }
-            #endregion
+            return await strategy.ValidateEntityDtoPropertyMappingAsync(request);
         }
         catch (Exception ex)
         {
@@ -409,52 +88,6 @@ public static class ValidationService
     // ARCHGUARD_GENERATED_RULE_END - ValidateEntityDtoPropertyMapping
 
     // ARCHGUARD_INSERTION_POINT_METHODS_END
-
-    private static string ExtractJsonFromResponse(string agentResponse)
-    {
-        if (string.IsNullOrWhiteSpace(agentResponse) is true)
-        {
-            Console.WriteLine("ERROR: Agent returned empty or whitespace response");
-            return JsonSerializer.Serialize(new
-            {
-                passed = false,
-                explanation = "Agent returned empty response - check agent installation and command execution"
-            });
-        }
-
-        // Try to find JSON within ```json blocks first
-        var jsonBlockMatch = Regex.Match(agentResponse, @"```json\s*\n(.*?)\n```", RegexOptions.Singleline | RegexOptions.IgnoreCase);
-        if (jsonBlockMatch.Success is true)
-        {
-            return jsonBlockMatch.Groups[1].Value.Trim();
-        }
-
-        // Try to find JSON within ``` blocks (without json specifier)
-        var codeBlockMatch = Regex.Match(agentResponse, @"```\s*\n(.*?)\n```", RegexOptions.Singleline);
-        if (codeBlockMatch.Success is true)
-        {
-            var blockContent = codeBlockMatch.Groups[1].Value.Trim();
-            if (blockContent.StartsWith("{") && blockContent.EndsWith("}"))
-            {
-                return blockContent;
-            }
-        }
-
-        // Look for JSON object in the entire response (most permissive)
-        var jsonMatch = Regex.Match(agentResponse, @"\{.*\}", RegexOptions.Singleline);
-        if (jsonMatch.Success)
-        {
-            return jsonMatch.Value;
-        }
-
-        // Fallback - return error JSON with debug info
-        Console.WriteLine($"ERROR: Could not parse JSON from agent response. Response content: '{agentResponse}'");
-        return JsonSerializer.Serialize(new
-        {
-            passed = false,
-            explanation = $"Could not parse JSON from agent response. Response length: {agentResponse?.Length ?? 0} characters"
-        });
-    }
 
     public static string ConvertToWslPath(string inputPath)
     {
@@ -497,6 +130,20 @@ public static class ValidationService
         // Already WSL format or relative path - just convert slashes
         return inputPath.Replace("\\", "/");
     }
+
+    #region Private Helper Methods
+    // Strategy factory method
+    private static IValidationStrategy GetValidationStrategy(CodingAgent codingAgent)
+    {
+        return codingAgent switch
+        {
+            CodingAgent.LocalFoundry => new ApiValidationStrategy(),
+            CodingAgent.ClaudeCode => new FileSystemValidationStrategy(),
+            CodingAgent.GeminiCli => new FileSystemValidationStrategy(),
+            _ => new FileSystemValidationStrategy()
+        };
+    }
+    #endregion
 }
 
-public record ContextFile(string FilePath);
+public record ContextFile(string FilePath, string Content, string? Diff = null);

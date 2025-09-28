@@ -6,11 +6,28 @@ using System.Text.Json.Serialization;
 
 namespace ArchGuard.MCP.Services;
 
+#region GH Flow Info
+// GitHub UI Action -> Webhook Handler Mapping
+//
+// Push commit -> push event -> PushWebhookHandler -> Full execution of all checks.
+//      Note - above also includes event: -> pull_request (synchronize) -> PullRequestWebhookHandler -> Acknowledge only.
+// Open/Close/Reopen PR -> pull_request (opened/closed/reopened) -> PullRequestWebhookHandler -> Full execution of all checks.
+// "Re-run all checks" -> check_suite (rerequested) -> CheckSuiteWebhookHandler -> Full execution of all checks.
+// "Re-run failed checks" -> check_run (rerequested) -> CheckRunWebhookHandler -> Targeted execution (only the actual failed check or checks).
+// "Re-run single check" -> only available for failed checks, and acts exactly the same as above.
+//
+#endregion
+
 public class GitHubCheckService
 {
+    public static CodingAgent SelectedCodingAgent { get; set; } = CodingAgent.ClaudeCode;
+
     // ARCHGUARD_TEMPLATE_CONSTANT_START
+    // TEMPLATE_CHECK_NAME_CONSTANT: DependencyRegistrationCheckName
+    public static string DependencyRegistrationCheckName { get; } = "Dependency Registration";
+
     // TEMPLATE_CHECK_NAME_CONSTANT: DependencyRegistrationDetailsUrlForCheck
-    public static string DependencyRegistrationDetailsUrlForCheck = "https://example.com/details/di-check";
+    public static string DependencyRegistrationDetailsUrlForCheck { get; } = "https://example.com/details/di-check";
     // ARCHGUARD_TEMPLATE_CONSTANT_END
 
     // ARCHGUARD_INSERTION_POINT_CONSTANTS_START
@@ -19,7 +36,9 @@ public class GitHubCheckService
     // ARCHGUARD_GENERATED_RULE_START - ValidateEntityDtoPropertyMapping
     // Generated from template on: 9/17/25
     // DO NOT EDIT - This code will be regenerated
-    public static string EntityDtoPropertyMappingDetailsUrlForCheck = "https://example.com/details/dto-check";
+    public static string EntityDtoPropertyMappingCheckName { get; } = "EntityDtoPropertyMapping";
+
+    public static string EntityDtoPropertyMappingDetailsUrlForCheck { get; } = "https://example.com/details/dto-check";
     // ARCHGUARD_GENERATED_RULE_END - ValidateEntityDtoPropertyMapping
 
     // ARCHGUARD_INSERTION_POINT_CONSTANTS_END
@@ -27,21 +46,25 @@ public class GitHubCheckService
     public bool UseAnnotations { get; set; } = true;
 
     private ILogger<GitHubCheckService> Logger { get; set; }
+    private IGitHubFileContentService FileContentService { get; set; }
 
-    public GitHubCheckService(ILogger<GitHubCheckService> logger)
+    public GitHubCheckService(
+        ILogger<GitHubCheckService> logger,
+        IGitHubFileContentService fileContentService)
     {
         this.Logger = logger;
+        this.FileContentService = fileContentService;
     }
 
     /// <summary>
     /// Creates a new GitHub check run in "queued" status for immediate visibility.
     /// Used in Phase 1 of webhook handling to show "X of Y checks" in GitHub UI.
     /// </summary>
-    public async Task<long> CreateCheckAsync(string checkName, CheckExecutionArgs args, IGitHubClient gitHubClient, string detailsUrl)
+    public async Task<long> CreateCheckAsync(CheckExecutionArgs args, IGitHubClient gitHubClient, string detailsUrl)
     {
         try
         {
-            var newCheckRun = new NewCheckRun(checkName, args.CommitSha)
+            var newCheckRun = new NewCheckRun(args.CheckName, args.CommitSha)
             {
                 Status = CheckStatus.Queued,
                 DetailsUrl = detailsUrl,
@@ -56,14 +79,14 @@ public class GitHubCheckService
             var createdCheck = await gitHubClient.Check.Run.Create(args.RepoOwner, args.RepoName, newCheckRun);
 
             this.Logger.LogInformation("Created Check Run '{CheckName}' (ID: {CheckRunId}) for commit {CommitSha}",
-                checkName, createdCheck.Id, args.CommitSha.Substring(0, 7));
+                args.CheckName, createdCheck.Id, args.CommitSha.Substring(0, 7));
 
             return createdCheck.Id;
         }
         catch (Exception ex)
         {
             this.Logger.LogError(ex, "Failed to create Check Run '{CheckName}' for commit {CommitSha}",
-                checkName, args.CommitSha.Substring(0, 7));
+                args.CheckName, args.CommitSha.Substring(0, 7));
             throw;
         }
     }
@@ -72,161 +95,10 @@ public class GitHubCheckService
     // TEMPLATE_CHECK_METHOD_NAME: ExecuteDepInjectionCheckAsync
     // TEMPLATE_VALIDATION_SERVICE_METHOD: ValidationService.ValidateDependencyRegistrationAsync
     // TEMPLATE_CHECK_NAME_REFERENCE: DependencyRegistrationCheckName
-    public async Task ExecuteDepInjectionCheckAsync(CheckExecutionArgs args, string windowsRoot, string wslRoot, long githubInstallationId, IGitHubClient githubClient, long? existingCheckId = null)
+    public async Task ExecuteDepInjectionCheckAsync(CheckExecutionArgs args, string windowsRoot, string wslRoot, long githubInstallationId, IGitHubClient githubClient, long existingCheckId, ContextFile[]? contextFiles = null, string? webhookPayloadJson = null)
     {
-        try
-        {
-            long checkRunId;
-
-            // --- Step 1: Create Check Run (updating existing does not seem to be reflected on GH GUI) ---
-            try
-            {
-                // Create a new check run
-                var newCheckRun = new NewCheckRun(args.CheckName, args.CommitSha)
-                {
-                    Status = CheckStatus.InProgress,
-                    StartedAt = DateTimeOffset.UtcNow,
-                    DetailsUrl = GitHubCheckService.DependencyRegistrationDetailsUrlForCheck,
-                    Output = new NewCheckRunOutput(args.InitialTitle, args.InitialSummary)
-                    {
-                        // --- Explicitly empty annotations and text/images for new run ---
-                        Text = "The check has been queued and is now running...",
-                        Annotations = new List<NewCheckRunAnnotation>(),
-                        Images = new List<NewCheckRunImage>()
-                    }
-                };
-                var createdCheck = await githubClient.Check.Run.Create(args.RepoOwner, args.RepoName, newCheckRun);
-                checkRunId = createdCheck.Id;
-                this.Logger.LogInformation("Created new Check Run '{CheckName}' (ID: {CheckRunId}) for commit {CommitSha}...", args.CheckName, checkRunId, args.CommitSha.Substring(0, 7));
-            }
-            catch (Exception ex)
-            {
-                this.Logger.LogError(ex, "Failed to create/update Check Run '{CheckName}' for commit {CommitSha} to 'in_progress'.", args.CheckName, args.CommitSha.Substring(0, 7));
-                // Consider updating to 'failure' or 'cancelled' if initial setup fails
-                return;
-            }
-
-            // 2. Perform AI analysis
-            var aiResultJsonString = await ValidationService.ValidateDependencyRegistrationAsync(windowsRoot, wslRoot, Array.Empty<ContextFile>());
-            AiCheckResult aiResult;
-            Console.WriteLine("aiResultJsonString");
-            Console.WriteLine(aiResultJsonString);
-
-            #region Parse Claude Code Result String
-            try
-            {
-                using var doc = JsonDocument.Parse(aiResultJsonString);
-
-                if (doc.RootElement.ValueKind == JsonValueKind.String)
-                {
-                    // If the root element is a JSON string literal,
-                    // its *value* is the actual JSON we want to deserialize.
-                    string innerJson = doc.RootElement.GetString() ?? throw new InvalidOperationException("AI result inner JSON string value was null.");
-                    aiResult = JsonSerializer.Deserialize<AiCheckResult>(innerJson)
-                               ?? throw new InvalidOperationException("Failed to deserialize AI check result from inner JSON string.");
-                    this.Logger.LogDebug("Successfully unwrapped and deserialized AI result from a string literal.");
-                }
-                else if (doc.RootElement.ValueKind == JsonValueKind.Object)
-                {
-                    // If the root element is directly a JSON object,
-                    // proceed with deserialization as normal.
-                    aiResult = JsonSerializer.Deserialize<AiCheckResult>(aiResultJsonString)
-                               ?? throw new InvalidOperationException("Failed to deserialize AI check result directly from JSON object.");
-                    this.Logger.LogDebug("Successfully deserialized AI result directly from JSON object.");
-                }
-                else
-                {
-                    // Handle other unexpected JSON root types
-                    throw new JsonException($"Unexpected JSON root element type for AI result: {doc.RootElement.ValueKind}. Expected String or Object.");
-                }
-            }
-            catch (Exception ex)
-            {
-                this.Logger.LogError(ex, "Failed to parse AI result JSON for Check Run '{CheckName}' (ID: {CheckRunId}). Raw string: {RawAIResult}", args.CheckName, checkRunId, aiResultJsonString);
-                // Fallback to a failure conclusion if AI result parsing fails
-                aiResult = new AiCheckResult { Passed = false, Explanation = "Failed to parse AI analysis results due to JSON format error." };
-            }
-
-            // --- Step 3: Determine Conclusion and prepare output based on AI result ---
-            CheckConclusion checkConclusion = aiResult.Passed ? CheckConclusion.Success : CheckConclusion.Failure;
-            string outputTitle = aiResult.Passed ? ValidationService.DependencyRegistrationCheckName + " Check Passed" : ValidationService.DependencyRegistrationCheckName + " Check Failed";
-            string outputSummary = aiResult.Explanation; // Use explanation as summary
-            List<NewCheckRunAnnotation> annotations = new List<NewCheckRunAnnotation>();
-            string outputText = string.Empty; // Build this separately for detailed text
-            #endregion
-
-            this.Logger.LogInformation("Returning check pass to GH (true/false): {result}", aiResult.Passed);
-
-            if (aiResult.Violations.Count != 0 && this.UseAnnotations is true)
-            {
-                // Create annotations for each violation
-                foreach (var violation in aiResult.Violations)
-                {
-                    string annotationFilePath = GetRelativeRepoPathForAnnotation(violation.File, args.RepoName);
-
-                    // Skip this annotation if path resolution failed
-                    if (string.IsNullOrEmpty(annotationFilePath))
-                    {
-                        this.Logger.LogWarning("Skipping annotation for violation at '{FilePath}' - could not resolve relative path", violation.File);
-                        continue;
-                    }
-
-                    annotations.Add(new NewCheckRunAnnotation(
-                        path: annotationFilePath,
-                        startLine: violation.Line,
-                        endLine: violation.Line,
-                        annotationLevel: CheckAnnotationLevel.Failure, // Or Warning, depending on severity
-                        message: violation.Message)
-                    {
-                        Title = ValidationService.DependencyRegistrationCheckName + " Violation",
-                        RawDetails = $"File: {violation.File}, Line: {violation.Line}\nMessage: {violation.Message}"
-                    });
-                }
-
-                outputText = "**Detected Violations:**\n\n" +
-                             string.Join("\n", aiResult.Violations.Select(v => {
-                                 string relativePath = GetRelativeRepoPathForAnnotation(v.File, args.RepoName);
-                                 // If the relative path couldn't be determined, fall back to the original full path with a note
-                                 string displayPath = string.IsNullOrEmpty(relativePath) ? $"{v.File} (absolute path)" : $"`{relativePath}`";
-                                 return $"- **File:** {displayPath} (Line: {v.Line}): {v.Message}";
-                             }));
-            }
-
-            // Add the overall explanation as part of the text
-            outputText = (string.IsNullOrEmpty(outputText) ? "No " + ValidationService.DependencyRegistrationCheckName + " violations were detected." : outputText + "\n\n") + aiResult.Explanation;
-
-
-            // --- Step 4: Update Check Run to 'completed' with the final conclusion and output ---
-            try
-            {
-                var updateCheckRun = new CheckRunUpdate()
-                {
-                    Status = CheckStatus.Completed,
-                    Conclusion = checkConclusion,
-                    CompletedAt = DateTimeOffset.UtcNow,
-                    Output = new NewCheckRunOutput(outputTitle, outputSummary)
-                    {
-                        Text = outputText,
-                        Annotations = annotations,
-                        // Images = new List<NewCheckRunImage> { ... } // Add images if needed, will also replace previous images
-                    }
-                };
-
-                await githubClient.Check.Run.Update(args.RepoOwner, args.RepoName, checkRunId, updateCheckRun);
-                
-                this.Logger.LogInformation("Check run '{CheckName}' (ID: {CheckRunId}) completed with conclusion '{Conclusion}'.", args.CheckName, checkRunId, checkConclusion);
-            }
-            catch (Exception ex)
-            {
-                this.Logger.LogError(ex, "Failed to update Check Run '{CheckName}' (ID: {CheckRunId}) to 'completed'.", args.CheckName, checkRunId);
-            }
-        }
-        catch (Exception ex)
-        {
-            Console.WriteLine("An error occurred .");
-            Console.WriteLine(ex.Message);
-            return;
-        }
+        await this.ExecuteCheckAsync(args, windowsRoot, wslRoot, githubInstallationId, githubClient, existingCheckId,
+            ValidationService.ValidateDependencyRegistrationAsync, contextFiles, webhookPayloadJson);
     }
     // ARCHGUARD_TEMPLATE_CHECK_METHOD_END
 
@@ -236,154 +108,58 @@ public class GitHubCheckService
     // ARCHGUARD_GENERATED_RULE_START - ValidateEntityDtoPropertyMapping
     // Generated from template on: 9/17/25
     // DO NOT EDIT - This code will be regenerated
-    public async Task ExecuteEntityDtoPropertyMappingCheckAsync(CheckExecutionArgs args, string windowsRoot, string wslRoot, long githubInstallationId, IGitHubClient githubClient, long? existingCheckId = null)
+    public async Task ExecuteEntityDtoPropertyMappingCheckAsync(CheckExecutionArgs args, string windowsRoot, string wslRoot, long githubInstallationId, IGitHubClient githubClient, long existingCheckId, ContextFile[]? contextFiles = null, string? webhookPayloadJson = null)
+    {
+        await this.ExecuteCheckAsync(args, windowsRoot, wslRoot, githubInstallationId, githubClient, existingCheckId,
+            ValidationService.ValidateEntityDtoPropertyMappingAsync, contextFiles, webhookPayloadJson);
+    }
+    // ARCHGUARD_GENERATED_RULE_END - ValidateEntityDtoPropertyMapping
+
+    // ARCHGUARD_INSERTION_POINT_METHODS_END
+
+    #region Private Helper Functions
+    // This is the entry point from the rule-specific methods above. It uses the other private methods below this one.
+    private async Task ExecuteCheckAsync(CheckExecutionArgs args, string windowsRoot, string wslRoot, long githubInstallationId, IGitHubClient githubClient, 
+        long existingCheckId, Func<ValidationRequest, Task<string>> validationMethod,
+        ContextFile[]? contextFiles = null, string? webhookPayloadJson = null)
     {
         try
         {
-            long checkRunId;
+            // Update Check Run
+            long? checkRunIdOrNull = await this.UpdateCheckRunToInProgressAsync(args, existingCheckId, githubClient);
 
-            // --- Step 1: Create Check Run (updating existing does not seem to be reflected on GH GUI) ---
-            try
+            if (checkRunIdOrNull is null)
             {
-                // Create a new check run
-                var newCheckRun = new NewCheckRun(args.CheckName, args.CommitSha)
-                {
-                    Status = CheckStatus.InProgress,
-                    StartedAt = DateTimeOffset.UtcNow,
-                    DetailsUrl = GitHubCheckService.EntityDtoPropertyMappingDetailsUrlForCheck,
-                    Output = new NewCheckRunOutput(args.InitialTitle, args.InitialSummary)
-                    {
-                        // --- Explicitly empty annotations and text/images for new run ---
-                        Text = "The check has been queued and is now running...",
-                        Annotations = new List<NewCheckRunAnnotation>(),
-                        Images = new List<NewCheckRunImage>()
-                    }
-                };
-                var createdCheck = await githubClient.Check.Run.Create(args.RepoOwner, args.RepoName, newCheckRun);
-                checkRunId = createdCheck.Id;
-                this.Logger.LogInformation("Created new Check Run '{CheckName}' (ID: {CheckRunId}) for commit {CommitSha}...", args.CheckName, checkRunId, args.CommitSha.Substring(0, 7));
-            }
-            catch (Exception ex)
-            {
-                this.Logger.LogError(ex, "Failed to create/update Check Run '{CheckName}' for commit {CommitSha} to 'in_progress'.", args.CheckName, args.CommitSha.Substring(0, 7));
-                // Consider updating to 'failure' or 'cancelled' if initial setup fails
                 return;
             }
 
-            // 2. Perform AI analysis
-            var aiResultJsonString = await ValidationService.ValidateEntityDtoPropertyMappingAsync(windowsRoot, wslRoot, Array.Empty<ContextFile>());
-            AiCheckResult aiResult;
-            Console.WriteLine("aiResultJsonString");
-            Console.WriteLine(aiResultJsonString);
+            long checkRunId = checkRunIdOrNull.Value;
 
-            #region Parse Claude Code Result String
-            try
-            {
-                using var doc = JsonDocument.Parse(aiResultJsonString);
+            // Determine context files and diffs based on agent type
+            var validationRequest = await this.DetermineContextFilesAndDiffsAsync(contextFiles, webhookPayloadJson, args, githubClient);
+            validationRequest.WindowsRoot = windowsRoot;
+            validationRequest.WslRoot = wslRoot;
+            validationRequest.SelectedCodingAgent = GitHubCheckService.SelectedCodingAgent;
 
-                if (doc.RootElement.ValueKind == JsonValueKind.String)
-                {
-                    // If the root element is a JSON string literal,
-                    // its *value* is the actual JSON we want to deserialize.
-                    string innerJson = doc.RootElement.GetString() ?? throw new InvalidOperationException("AI result inner JSON string value was null.");
-                    aiResult = JsonSerializer.Deserialize<AiCheckResult>(innerJson)
-                               ?? throw new InvalidOperationException("Failed to deserialize AI check result from inner JSON string.");
-                    this.Logger.LogDebug("Successfully unwrapped and deserialized AI result from a string literal.");
-                }
-                else if (doc.RootElement.ValueKind == JsonValueKind.Object)
-                {
-                    // If the root element is directly a JSON object,
-                    // proceed with deserialization as normal.
-                    aiResult = JsonSerializer.Deserialize<AiCheckResult>(aiResultJsonString)
-                               ?? throw new InvalidOperationException("Failed to deserialize AI check result directly from JSON object.");
-                    this.Logger.LogDebug("Successfully deserialized AI result directly from JSON object.");
-                }
-                else
-                {
-                    // Handle other unexpected JSON root types
-                    throw new JsonException($"Unexpected JSON root element type for AI result: {doc.RootElement.ValueKind}. Expected String or Object.");
-                }
-            }
-            catch (Exception ex)
-            {
-                this.Logger.LogError(ex, "Failed to parse AI result JSON for Check Run '{CheckName}' (ID: {CheckRunId}). Raw string: {RawAIResult}", args.CheckName, checkRunId, aiResultJsonString);
-                // Fallback to a failure conclusion if AI result parsing fails
-                aiResult = new AiCheckResult { Passed = false, Explanation = "Failed to parse AI analysis results due to JSON format error." };
-            }
+            // Perform AI analysis
+            //var aiResultJsonString = await ValidationService.ValidateDependencyRegistrationAsync(validationRequest);
+            var aiResultJsonString = await validationMethod(validationRequest);
 
-            // --- Step 3: Determine Conclusion and prepare output based on AI result ---
-            CheckConclusion checkConclusion = aiResult.Passed ? CheckConclusion.Success : CheckConclusion.Failure;
-            string outputTitle = aiResult.Passed ? ValidationService.EntityDtoPropertyMappingCheckName + " Check Passed" : ValidationService.EntityDtoPropertyMappingCheckName + " Check Failed";
-            string outputSummary = aiResult.Explanation; // Use explanation as summary
-            List<NewCheckRunAnnotation> annotations = new List<NewCheckRunAnnotation>();
-            string outputText = string.Empty; // Build this separately for detailed text
-            #endregion
+            var aiResult = this.ParseAiResultJson(aiResultJsonString, args.CheckName, checkRunId);
 
             this.Logger.LogInformation("Returning check pass to GH (true/false): {result}", aiResult.Passed);
 
-            if (aiResult.Violations.Count != 0 && this.UseAnnotations is true)
-            {
-                // Create annotations for each violation
-                foreach (var violation in aiResult.Violations)
-                {
-                    string annotationFilePath = GetRelativeRepoPathForAnnotation(violation.File, args.RepoName);
+            List<NewCheckRunAnnotation> annotations = new List<NewCheckRunAnnotation>();
 
-                    // Skip this annotation if path resolution failed
-                    if (string.IsNullOrEmpty(annotationFilePath))
-                    {
-                        this.Logger.LogWarning("Skipping annotation for violation at '{FilePath}' - could not resolve relative path", violation.File);
-                        continue;
-                    }
+            // Determine Conclusion and prepare output based on AI result
+            var outputText = this.ProcessViolationsAndCreateAnnotations(annotations, aiResult, args.CheckName, args.RepoName);
 
-                    annotations.Add(new NewCheckRunAnnotation(
-                        path: annotationFilePath,
-                        startLine: violation.Line,
-                        endLine: violation.Line,
-                        annotationLevel: CheckAnnotationLevel.Failure, // Or Warning, depending on severity
-                        message: violation.Message)
-                    {
-                        Title = ValidationService.EntityDtoPropertyMappingCheckName + " Violation",
-                        RawDetails = $"File: {violation.File}, Line: {violation.Line}\nMessage: {violation.Message}"
-                    });
-                }
+            // Update Check Run to 'completed' with the final conclusion and output
+            CheckConclusion checkConclusion = aiResult.Passed ? CheckConclusion.Success : CheckConclusion.Failure;
+            string outputTitle = aiResult.Passed ? args.CheckName + " Check Passed" : args.CheckName + " Check Failed";
+            string outputSummary = aiResult.Explanation; // Use explanation as summary
 
-                outputText = "**Detected Violations:**\n\n" +
-                             string.Join("\n", aiResult.Violations.Select(v => {
-                                 string relativePath = GetRelativeRepoPathForAnnotation(v.File, args.RepoName);
-                                 // If the relative path couldn't be determined, fall back to the original full path with a note
-                                 string displayPath = string.IsNullOrEmpty(relativePath) ? $"{v.File} (absolute path)" : $"`{relativePath}`";
-                                 return $"- **File:** {displayPath} (Line: {v.Line}): {v.Message}";
-                             }));
-            }
-
-            // Add the overall explanation as part of the text
-            outputText = (string.IsNullOrEmpty(outputText) ? "No " + ValidationService.EntityDtoPropertyMappingCheckName + " violations were detected." : outputText + "\n\n") + aiResult.Explanation;
-
-
-            // --- Step 4: Update Check Run to 'completed' with the final conclusion and output ---
-            try
-            {
-                var updateCheckRun = new CheckRunUpdate()
-                {
-                    Status = CheckStatus.Completed,
-                    Conclusion = checkConclusion,
-                    CompletedAt = DateTimeOffset.UtcNow,
-                    Output = new NewCheckRunOutput(outputTitle, outputSummary)
-                    {
-                        Text = outputText,
-                        Annotations = annotations,
-                        // Images = new List<NewCheckRunImage> { ... } // Add images if needed, will also replace previous images
-                    }
-                };
-
-                await githubClient.Check.Run.Update(args.RepoOwner, args.RepoName, checkRunId, updateCheckRun);
-
-                this.Logger.LogInformation("Check run '{CheckName}' (ID: {CheckRunId}) completed with conclusion '{Conclusion}'.", args.CheckName, checkRunId, checkConclusion);
-            }
-            catch (Exception ex)
-            {
-                this.Logger.LogError(ex, "Failed to update Check Run '{CheckName}' (ID: {CheckRunId}) to 'completed'.", args.CheckName, checkRunId);
-            }
+            await this.CompleteCheckRunAsync(args, checkConclusion, outputTitle, outputSummary, outputText, annotations, githubClient, checkRunId);
         }
         catch (Exception ex)
         {
@@ -392,9 +168,202 @@ public class GitHubCheckService
             return;
         }
     }
-    // ARCHGUARD_GENERATED_RULE_END - ValidateEntityDtoPropertyMapping
 
-    // ARCHGUARD_INSERTION_POINT_METHODS_END
+    private async Task<long?> UpdateCheckRunToInProgressAsync(CheckExecutionArgs args, long existingCheckId, IGitHubClient githubClient)
+    {
+        long? checkRunId = null;
+
+        try
+        {
+            var updateToInProgress = new CheckRunUpdate()
+            {
+                Status = CheckStatus.InProgress,
+                StartedAt = DateTimeOffset.UtcNow,
+                Output = new NewCheckRunOutput(args.InitialTitle, args.InitialSummary)
+                {
+                    Text = "The check has been queued and is now running...",
+                    // --- Explicitly empty annotations and text/images for new run ---
+                    Annotations = new List<NewCheckRunAnnotation>(),
+                    Images = new List<NewCheckRunImage>()
+                }
+            };
+            var createdCheck = await githubClient.Check.Run.Update(args.RepoOwner, args.RepoName, existingCheckId, updateToInProgress);
+
+            checkRunId = createdCheck.Id;
+            this.Logger.LogInformation("Updated Check Run '{CheckName}' (ID: {CheckRunId}) for commit {CommitSha}...", args.CheckName, checkRunId, args.CommitSha.Substring(0, 7));
+        }
+        catch (Exception ex)
+        {
+            this.Logger.LogError(ex, "Failed to update Check Run '{CheckName}' for commit {CommitSha} to 'in_progress'.", args.CheckName, args.CommitSha.Substring(0, 7));
+            // Consider updating to 'failure' or 'cancelled' if initial setup fails
+        }
+
+        return checkRunId;
+    }
+
+    private async Task<ValidationRequest> DetermineContextFilesAndDiffsAsync(
+          ContextFile[]? contextFiles, string? webhookPayloadJson, CheckExecutionArgs args, IGitHubClient githubClient)
+    {
+        var validationRequest = new ValidationRequest();
+
+        if (GitHubCheckService.SelectedCodingAgent == CodingAgent.LocalFoundry)
+        {
+            if (contextFiles is not null)
+            {
+                // Use pre-extracted context files (from webhook handler to avoid duplication)
+                validationRequest.ContextFiles = contextFiles;
+
+                // Extract diffs from the ContextFile objects (no additional API calls needed)
+                validationRequest.Diffs = contextFiles
+                    .Where(f => !string.IsNullOrEmpty(f.Diff))
+                    .Select(f => f.Diff!)
+                    .ToArray();
+            }
+            else if (!string.IsNullOrEmpty(webhookPayloadJson))
+            {
+                // Enhanced webhook-based extraction with diffs
+                var extractionResult = await this.FileContentService.ExtractFromWebhookAsync(
+                    webhookPayloadJson, githubClient);
+                validationRequest.ContextFiles = extractionResult.Files;
+                validationRequest.Diffs = extractionResult.Diffs;
+                this.Logger.LogInformation("Extracted {FileCount} files and {DiffCount} diffs from webhook for LocalFoundry validation",
+                    validationRequest.ContextFiles.Length, validationRequest.Diffs.Length);
+            }
+            else
+            {
+                // Fallback to basic file content extraction
+                validationRequest.ContextFiles = await this.FileContentService.ExtractFileContentsAsync(
+                    args.RepoOwner, args.RepoName, args.CommitSha, githubClient);
+                this.Logger.LogInformation("Extracted {FileCount} files for LocalFoundry validation (no diffs available)", validationRequest.ContextFiles.Length);
+            }
+        }
+        else if (contextFiles is not null)
+        {
+            // Use provided context files
+            validationRequest.ContextFiles = contextFiles;
+        }
+        else
+        {
+            // File system agents (ClaudeCode, GeminiCLI) use empty arrays
+            validationRequest.ContextFiles = Array.Empty<ContextFile>();
+        }
+
+        return validationRequest;
+    }
+
+    private AiCheckResult ParseAiResultJson(string aiResultJsonString, string checkName, long checkRunId)
+    {
+        AiCheckResult aiResult;
+
+        try
+        {
+            using var doc = JsonDocument.Parse(aiResultJsonString);
+
+            if (doc.RootElement.ValueKind == JsonValueKind.String)
+            {
+                // If the root element is a JSON string literal,
+                // its *value* is the actual JSON we want to deserialize.
+                string innerJson = doc.RootElement.GetString() ?? throw new InvalidOperationException("AI result inner JSON string value was null.");
+                aiResult = JsonSerializer.Deserialize<AiCheckResult>(innerJson)
+                           ?? throw new InvalidOperationException("Failed to deserialize AI check result from inner JSON string.");
+                this.Logger.LogDebug("Successfully unwrapped and deserialized AI result from a string literal.");
+            }
+            else if (doc.RootElement.ValueKind == JsonValueKind.Object)
+            {
+                // If the root element is directly a JSON object,
+                // proceed with deserialization as normal.
+                aiResult = JsonSerializer.Deserialize<AiCheckResult>(aiResultJsonString)
+                           ?? throw new InvalidOperationException("Failed to deserialize AI check result directly from JSON object.");
+                this.Logger.LogDebug("Successfully deserialized AI result directly from JSON object.");
+            }
+            else
+            {
+                // Handle other unexpected JSON root types
+                throw new JsonException($"Unexpected JSON root element type for AI result: {doc.RootElement.ValueKind}. Expected String or Object.");
+            }
+        }
+        catch (Exception ex)
+        {
+            this.Logger.LogError(ex, "Failed to parse AI result JSON for Check Run '{CheckName}' (ID: {CheckRunId}). Raw string: {RawAIResult}", checkName, checkRunId, aiResultJsonString);
+            // Fallback to a failure conclusion if AI result parsing fails
+            aiResult = new AiCheckResult { Passed = false, Explanation = "Failed to parse AI analysis results due to JSON format error." };
+        }
+
+        return aiResult;
+    }
+
+    private string ProcessViolationsAndCreateAnnotations(List<NewCheckRunAnnotation> annotations, AiCheckResult aiResult, string checkName, string repoName)
+    {
+        string outputText = string.Empty;
+
+        if (aiResult.Violations.Count != 0 && this.UseAnnotations is true)
+        {
+            // Create annotations for each violation
+            foreach (var violation in aiResult.Violations)
+            {
+                string annotationFilePath = GetRelativeRepoPathForAnnotation(violation.File, repoName);
+
+                // Skip this annotation if path resolution failed
+                if (string.IsNullOrEmpty(annotationFilePath))
+                {
+                    this.Logger.LogWarning("Skipping annotation for violation at '{FilePath}' - could not resolve relative path", violation.File);
+                    continue;
+                }
+
+                annotations.Add(new NewCheckRunAnnotation(
+                    path: annotationFilePath,
+                    startLine: violation.Line,
+                    endLine: violation.Line,
+                    annotationLevel: CheckAnnotationLevel.Failure, // Or Warning, depending on severity
+                    message: violation.Message)
+                {
+                    Title = checkName + " Violation",
+                    RawDetails = $"File: {violation.File}, Line: {violation.Line}\nMessage: {violation.Message}"
+                });
+            }
+
+            outputText = "**Detected Violations:**\n\n" +
+                         string.Join("\n", aiResult.Violations.Select(v => {
+                             string relativePath = GetRelativeRepoPathForAnnotation(v.File, repoName);
+                             // If the relative path couldn't be determined, fall back to the original full path with a note
+                             string displayPath = string.IsNullOrEmpty(relativePath) ? $"{v.File} (absolute path)" : $"`{relativePath}`";
+                             return $"- **File:** {displayPath} (Line: {v.Line}): {v.Message}";
+                         }));
+        }
+
+        // Add the overall explanation as part of the text
+        outputText = (string.IsNullOrEmpty(outputText) ? "No " + checkName + " violations were detected." : outputText + "\n\n") + aiResult.Explanation;
+
+        return outputText;
+    }
+
+    private async Task CompleteCheckRunAsync(CheckExecutionArgs args, CheckConclusion checkConclusion, string outputTitle, string outputSummary,
+        string outputText, List<NewCheckRunAnnotation> annotations, IGitHubClient githubClient, long checkRunId)
+    {
+        try
+        {
+            var updateCheckRun = new CheckRunUpdate()
+            {
+                Status = CheckStatus.Completed,
+                Conclusion = checkConclusion,
+                CompletedAt = DateTimeOffset.UtcNow,
+                Output = new NewCheckRunOutput(outputTitle, outputSummary)
+                {
+                    Text = outputText,
+                    Annotations = annotations,
+                    // Images = new List<NewCheckRunImage> { ... } // Add images if needed, will also replace previous images
+                }
+            };
+
+            await githubClient.Check.Run.Update(args.RepoOwner, args.RepoName, checkRunId, updateCheckRun);
+
+            this.Logger.LogInformation("Check run '{CheckName}' (ID: {CheckRunId}) completed with conclusion '{Conclusion}'.", args.CheckName, checkRunId, checkConclusion);
+        }
+        catch (Exception ex)
+        {
+            this.Logger.LogError(ex, "Failed to update Check Run '{CheckName}' (ID: {CheckRunId}) to 'completed'.", args.CheckName, checkRunId);
+        }
+    }
 
     /// <summary>
     /// Converts an absolute file path (from AI results, potentially WSL or Windows format)
@@ -458,20 +427,22 @@ public class GitHubCheckService
             return string.Empty;
         }
     }
+    #endregion
 
-    public class AiCheckResult
+    private class AiCheckResult
     {
         [JsonPropertyName("passed")]
         public bool Passed { get; set; }
 
         [JsonPropertyName("violations")]
+        [JsonConverter(typeof(FlexibleViolationsConverter))]
         public List<AiCheckViolation> Violations { get; set; } = new List<AiCheckViolation>();
 
         [JsonPropertyName("explanation")]
         public string Explanation { get; set; } = string.Empty;
     }
 
-    public class AiCheckViolation
+    private class AiCheckViolation
     {
         [JsonPropertyName("file")]
         public string File { get; set; } = string.Empty;
@@ -481,5 +452,64 @@ public class GitHubCheckService
 
         [JsonPropertyName("message")]
         public string Message { get; set; } = string.Empty;
+    }
+
+    /// <summary>
+    /// Custom JSON converter that handles violations as either:
+    /// - Array of objects: [{"file": "path", "line": 1, "message": "desc"}]
+    /// - Array of strings: ["violation message"]
+    /// </summary>
+    private class FlexibleViolationsConverter : JsonConverter<List<AiCheckViolation>>
+    {
+        public override List<AiCheckViolation> Read(ref Utf8JsonReader reader, Type typeToConvert, JsonSerializerOptions options)
+        {
+            var violations = new List<AiCheckViolation>();
+
+            if (reader.TokenType != JsonTokenType.StartArray)
+            {
+                throw new JsonException("Expected violations to be an array");
+            }
+
+            while (reader.Read())
+            {
+                if (reader.TokenType == JsonTokenType.EndArray)
+                {
+                    break;
+                }
+
+                if (reader.TokenType == JsonTokenType.String)
+                {
+                    // Handle string violation format: "violation message"
+                    var violationMessage = reader.GetString() ?? string.Empty;
+                    violations.Add(new AiCheckViolation
+                    {
+                        File = "unknown", // Default when only message is provided
+                        Line = 0,         // Default when line number is not provided
+                        Message = violationMessage
+                    });
+                }
+                else if (reader.TokenType == JsonTokenType.StartObject)
+                {
+                    // Handle object violation format: {"file": "path", "line": 1, "message": "desc"}
+                    var violation = JsonSerializer.Deserialize<AiCheckViolation>(ref reader, options);
+                    if (violation is not null)
+                    {
+                        violations.Add(violation);
+                    }
+                }
+                else
+                {
+                    throw new JsonException($"Unexpected token in violations array: {reader.TokenType}");
+                }
+            }
+
+            return violations;
+        }
+
+        public override void Write(Utf8JsonWriter writer, List<AiCheckViolation> value, JsonSerializerOptions options)
+        {
+            // Always write in object format for consistency
+            JsonSerializer.Serialize(writer, value, options);
+        }
     }
 }
