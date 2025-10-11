@@ -33,6 +33,14 @@ public class GitHubCheckService
     // ARCHGUARD_INSERTION_POINT_CONSTANTS_START
     // New rule constants go here in alphabetical order by rule name
 
+    // ARCHGUARD_GENERATED_RULE_START - ValidateDependencyDirection
+    // Generated from template on: 10/7/25
+    // DO NOT EDIT - This code will be regenerated
+    public static string DependencyDirectionCheckName { get; } = "DependencyDirection";
+
+    public static string DependencyDirectionDetailsUrlForCheck { get; } = "https://example.com/details/dep-dir-check";
+    // ARCHGUARD_GENERATED_RULE_END - ValidateDependencyDirection
+
     // ARCHGUARD_GENERATED_RULE_START - ValidateEntityDtoPropertyMapping
     // Generated from template on: 9/17/25
     // DO NOT EDIT - This code will be regenerated
@@ -104,6 +112,16 @@ public class GitHubCheckService
 
     // ARCHGUARD_INSERTION_POINT_METHODS_START
     // New rule check methods go here in alphabetical order by rule name
+
+    // ARCHGUARD_GENERATED_RULE_START - ValidateDependencyDirection
+    // Generated from template on: 10/7/25
+    // DO NOT EDIT - This code will be regenerated
+    public async Task ExecuteDependencyDirectionCheckAsync(CheckExecutionArgs args, string windowsRoot, string wslRoot, long githubInstallationId, IGitHubClient githubClient, long existingCheckId, ContextFile[]? contextFiles = null, string? webhookPayloadJson = null)
+    {
+        await this.ExecuteCheckAsync(args, windowsRoot, wslRoot, githubInstallationId, githubClient, existingCheckId,
+            ValidationService.ValidateDependencyDirectionAsync, contextFiles, webhookPayloadJson);
+    }
+    // ARCHGUARD_GENERATED_RULE_END - ValidateDependencyDirection
 
     // ARCHGUARD_GENERATED_RULE_START - ValidateEntityDtoPropertyMapping
     // Generated from template on: 9/17/25

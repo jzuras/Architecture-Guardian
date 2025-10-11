@@ -20,6 +20,17 @@ public class FileSystemValidationStrategy : IValidationStrategy
     // ARCHGUARD_INSERTION_POINT_METHODS_START
     // New rule method implementations go here in alphabetical order by rule name
 
+    // ARCHGUARD_GENERATED_RULE_START - ValidateDependencyDirection
+    // Generated from template on: 10/7/25
+    // DO NOT EDIT - This code will be regenerated
+    public async Task<string> ValidateDependencyDirectionAsync(ValidationRequest request)
+    {
+        return await ExecuteFileSystemValidationAsync(
+            request,
+            ValidationService.DependencyDirectionAiAgentInstructions);
+    }
+    // ARCHGUARD_GENERATED_RULE_END - ValidateDependencyDirection
+
     // ARCHGUARD_GENERATED_RULE_START - ValidateEntityDtoPropertyMapping
     // Generated from template on: 9/17/25
     // DO NOT EDIT - This code will be regenerated

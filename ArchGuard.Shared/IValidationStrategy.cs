@@ -10,6 +10,12 @@ public interface IValidationStrategy
     // ARCHGUARD_INSERTION_POINT_METHODS_START
     // New rule method signatures go here in alphabetical order by rule name
 
+    // ARCHGUARD_GENERATED_RULE_START - ValidateDependencyDirection
+    // Generated from template on: 10/7/25
+    // DO NOT EDIT - This code will be regenerated
+    Task<string> ValidateDependencyDirectionAsync(ValidationRequest request);
+    // ARCHGUARD_GENERATED_RULE_END - ValidateDependencyDirection
+
     // ARCHGUARD_GENERATED_RULE_START - ValidateEntityDtoPropertyMapping
     // Generated from template on: 9/17/25
     // DO NOT EDIT - This code will be regenerated

@@ -166,6 +166,16 @@ public class Program
         // ARCHGUARD_INSERTION_POINT_TOOL_REGISTRATION_START
         // New rule tool registrations go here in alphabetical order by rule name
 
+        // ARCHGUARD_GENERATED_RULE_START - ValidateDependencyDirection
+        // Generated from template on: 10/7/25
+        // DO NOT EDIT - This code will be regenerated
+        var dependencyDirectionTool = McpServerTool.Create(typeof(ArchValidationTool).GetMethod(nameof(ArchValidationTool.ValidateDependencyDirectionAsync))!);
+        dependencyDirectionTool.ProtocolTool.Name = nameof(ArchValidationTool.ValidateDependencyDirectionAsync);
+        dependencyDirectionTool.ProtocolTool.InputSchema = inputSchema;
+        dependencyDirectionTool.ProtocolTool.Title = "Validate " + GitHubCheckService.DependencyDirectionCheckName;
+        dependencyDirectionTool.ProtocolTool.Description = ArchValidationTool.DependencyDirectionMcpToolDescription;
+        // ARCHGUARD_GENERATED_RULE_END - ValidateDependencyDirection
+
         // ARCHGUARD_GENERATED_RULE_START - ValidateEntityDtoPropertyMapping
         // Generated from template on: 9/17/25
         // DO NOT EDIT - This code will be regenerated
@@ -199,6 +209,12 @@ public class Program
                         dependencyRegTool,
                         // ARCHGUARD_INSERTION_POINT_TOOL_COLLECTION_START
                         // New rule tools go here in alphabetical order by rule name
+
+                        // ARCHGUARD_GENERATED_RULE_START - ValidateDependencyDirection
+                        // Generated from template on: 10/7/25
+                        // DO NOT EDIT - This code will be regenerated
+                        dependencyDirectionTool,
+                        // ARCHGUARD_GENERATED_RULE_END - ValidateDependencyDirection
 
                         // ARCHGUARD_GENERATED_RULE_START - ValidateEntityDtoPropertyMapping
                         // Generated from template on: 9/17/25
@@ -245,6 +261,27 @@ public class Program
                     Console.ResetColor();
                     parsedAgent = CodingAgent.ClaudeCode;
                 }
+            }
+
+            // Configure GitHub Models if selected
+            if (parsedAgent == CodingAgent.GitHubModels)
+            {
+                ApiValidationStrategy.GitHubModelsPAT = builder.Configuration["GitHub:Models:PAT"]
+                    ?? Environment.GetEnvironmentVariable("GITHUB_MODELS_PAT");
+                ApiValidationStrategy.GitHubModelsModelId = builder.Configuration["GitHub:Models:ModelId"] ?? "openai/gpt-4o";
+                ApiValidationStrategy.GitHubModelsEndpoint = builder.Configuration["GitHub:Models:Endpoint"] ?? "https://models.github.ai/inference";
+
+                if (string.IsNullOrEmpty(ApiValidationStrategy.GitHubModelsPAT))
+                {
+                    Console.ForegroundColor = ConsoleColor.Red;
+                    Console.WriteLine("GitHubModels selected but PAT not configured. Set GitHub:Models:PAT in appsettings.json or GITHUB_MODELS_PAT environment variable.");
+                    Console.ResetColor();
+                    throw new InvalidOperationException("GitHub Models PAT not configured");
+                }
+
+                Console.ForegroundColor = ConsoleColor.Green;
+                Console.WriteLine($"GitHub Models configured: Model={ApiValidationStrategy.GitHubModelsModelId}, Endpoint={ApiValidationStrategy.GitHubModelsEndpoint}");
+                Console.ResetColor();
             }
 
             WebhookHandlerBase.SelectedCodingAgent = parsedAgent;

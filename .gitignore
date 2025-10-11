@@ -370,3 +370,16 @@ FodyWeavers.xsd
 /.claude/settings.local.json
 /McpServerConsole/.claude
 /McpServerSse/appsettings.Development.json
+
+# =============================================================================
+# Docker secrets and environment files (CRITICAL - never commit these)
+# =============================================================================
+secrets/*.pem
+secrets/.env
+.env
+
+# Docker volumes (if using local directories instead of named volumes)
+docker-volumes/
+
+# Docker build cache
+.dockercache/

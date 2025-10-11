@@ -85,6 +85,29 @@ public abstract class WebhookHandlerBase : IWebhookHandler
         // ARCHGUARD_INSERTION_POINT_CHECK_CREATION_START
         // New rule CheckExecutionArgs declarations and check creations go here in alphabetical order by rule name
 
+        // ARCHGUARD_GENERATED_RULE_START - ValidateDependencyDirection
+        // Generated from template on: 10/7/25
+        // DO NOT EDIT - This code will be regenerated
+        CheckExecutionArgs dependencyDirectionCheckArgs = new();
+        long dependencyDirectionCheckId = 0;
+        if (checkNameFromCheckRun is null || checkNameFromCheckRun.Equals(GitHubCheckService.DependencyDirectionCheckName, StringComparison.InvariantCultureIgnoreCase))
+        {
+            dependencyDirectionCheckArgs = new CheckExecutionArgs
+            {
+                RepoOwner = repoOwner,
+                RepoName = repoName,
+                CommitSha = commitSha,
+                CheckName = GitHubCheckService.DependencyDirectionCheckName,
+                InstallationId = installationId,
+                ExistingCheckRunId = checkRunId,
+                InitialTitle = GitHubCheckService.DependencyDirectionCheckName,
+                InitialSummary = $"Starting {GitHubCheckService.DependencyDirectionCheckName} validation for '{initialSummaryEndText}'."
+            };
+
+            dependencyDirectionCheckId = await CheckService.CreateCheckAsync(dependencyDirectionCheckArgs, GitHubClient, GitHubCheckService.DependencyDirectionDetailsUrlForCheck);
+        }
+        // ARCHGUARD_GENERATED_RULE_END - ValidateDependencyDirection
+
         // ARCHGUARD_GENERATED_RULE_START - ValidateEntityDtoPropertyMapping
         // Generated from template on: 9/17/25
         // DO NOT EDIT - This code will be regenerated
@@ -139,7 +162,7 @@ public abstract class WebhookHandlerBase : IWebhookHandler
                     wslRoot = cloneResult.WslPath;
                     logger.LogInformation("Repository cloned for file system agent: {Agent}", WebhookHandlerBase.SelectedCodingAgent);
                 }
-                else if (WebhookHandlerBase.SelectedCodingAgent == CodingAgent.LocalFoundry)
+                else if (WebhookHandlerBase.SelectedCodingAgent == CodingAgent.LocalFoundry || WebhookHandlerBase.SelectedCodingAgent == CodingAgent.GitHubModels)
                 {
                     // Extract files for API-based agents (no cloning needed)
                     try
@@ -170,6 +193,15 @@ public abstract class WebhookHandlerBase : IWebhookHandler
 
                 // ARCHGUARD_INSERTION_POINT_RULE_EXECUTION_START
                 // New rule execution calls go here in alphabetical order by rule name
+
+                // ARCHGUARD_GENERATED_RULE_START - ValidateDependencyDirection
+                // Generated from template on: 10/7/25
+                // DO NOT EDIT - This code will be regenerated
+                if (checkNameFromCheckRun is null || checkNameFromCheckRun.Equals(GitHubCheckService.DependencyDirectionCheckName, StringComparison.InvariantCultureIgnoreCase))
+                {
+                    await CheckService.ExecuteDependencyDirectionCheckAsync(dependencyDirectionCheckArgs, windowsRoot, wslRoot, installationId, GitHubClient, dependencyDirectionCheckId, sharedContextFiles, requestBody);
+                }
+                // ARCHGUARD_GENERATED_RULE_END - ValidateDependencyDirection
 
                 // ARCHGUARD_GENERATED_RULE_START - ValidateEntityDtoPropertyMapping
                 // Generated from template on: 9/17/25

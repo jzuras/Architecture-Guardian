@@ -17,8 +17,14 @@ public class ApiValidationStrategy : IValidationStrategy
     private static readonly SemaphoreSlim InitializationSemaphore = new(1, 1);
 
     // LocalFoundry model configuration
-    public static string LocalFoundryModelAlias { get; } = "qwen2.5-0.5b";//"phi-4-mini";
-    
+    //public static string LocalFoundryModelAlias { get; } = "qwen2.5-0.5b";
+    public static string LocalFoundryModelAlias { get; } = "qwen2.5-coder-1.5b";
+
+    // GitHub Models configuration (set from Program.cs)
+    public static string? GitHubModelsPAT { get; set; }
+    public static string GitHubModelsModelId { get; set; } = "openai/gpt-4o";
+    public static string GitHubModelsEndpoint { get; set; } = "https://models.github.ai/inference";
+
     // ARCHGUARD_TEMPLATE_RULE_START
     public async Task<string> ValidateDependencyRegistrationAsync(ValidationRequest request)
     {
@@ -30,6 +36,17 @@ public class ApiValidationStrategy : IValidationStrategy
 
     // ARCHGUARD_INSERTION_POINT_METHODS_START
     // New rule method implementations go here in alphabetical order by rule name
+
+    // ARCHGUARD_GENERATED_RULE_START - ValidateDependencyDirection
+    // Generated from template on: 10/7/25
+    // DO NOT EDIT - This code will be regenerated
+    public async Task<string> ValidateDependencyDirectionAsync(ValidationRequest request)
+    {
+        return await ExecuteApiValidationAsync(
+            request,
+            ValidationService.DependencyDirectionAiAgentInstructions);
+    }
+    // ARCHGUARD_GENERATED_RULE_END - ValidateDependencyDirection
 
     // ARCHGUARD_GENERATED_RULE_START - ValidateEntityDtoPropertyMapping
     // Generated from template on: 9/17/25
@@ -53,6 +70,11 @@ public class ApiValidationStrategy : IValidationStrategy
                 var foundryResult = await CallLocalFoundryWithContentAsync(request.ContextFiles, agentInstructions, request.Diffs);
                 return JsonSerializer.Serialize(foundryResult, ValidationService.WriteIndentedJsonSerializerOptions);
             }
+            else if (request.SelectedCodingAgent == CodingAgent.GitHubModels)
+            {
+                var githubResult = await CallGitHubModelsWithContentAsync(request.ContextFiles, agentInstructions, request.Diffs);
+                return JsonSerializer.Serialize(githubResult, ValidationService.WriteIndentedJsonSerializerOptions);
+            }
 
             return JsonSerializer.Serialize(new
             {
@@ -67,6 +89,100 @@ public class ApiValidationStrategy : IValidationStrategy
             {
                 passed = false,
                 explanation = $"Error in API validation: {ex.Message}"
+            });
+        }
+    }
+
+    private Task<object> CallGitHubModelsWithContentAsync(ContextFile[] contextFiles, string agentInstructions, string[]? diffs)
+    {
+        try
+        {
+            // Create fresh chat client for this validation (no conversation history)
+            var chatClient = CreateGitHubModelsChatClient();
+
+            // Build structured messages for better AI comprehension (reuse LocalFoundry pattern)
+            List<ChatMessage> messages = new List<ChatMessage>()
+            {
+                new SystemChatMessage("You are a senior c# developer who can validate code for issues/problems. Important: ignore commented-out code while performing this validation.")
+            };
+
+            // Add Code Under Test (CUT)-specific instructions about demo code
+            messages.Add(new UserChatMessage(
+                "=== CUT-SPECIFIC INSTRUCTIONS ===\n" +
+                "This is demo/test code designed to showcase violations.\n" +
+                "Comments mentioning 'RULE X VIOLATION' are documentation, not active violations.\n" +
+                "Only report actual code violations, ignore explanatory comments.\n" +
+                "=== END CUT-SPECIFIC INSTRUCTIONS ==="
+            ));
+
+            // Add diffs context if present with disclaimer
+            if (diffs is not null && diffs.Length > 0)
+            {
+                var diffContent = "=== RECENT CHANGES (CONTEXT ONLY - MAY BE UNRELATED) ===\n" +
+                                "Note: These changes may be unrelated to the current validation rule.\n" +
+                                "Analyze the complete files below, not just the changes.\n\n";
+
+                foreach (var diff in diffs)
+                {
+                    diffContent += $"```diff\n{diff}\n```\n";
+                }
+                diffContent += "=== END CONTEXT ===";
+
+                messages.Add(new UserChatMessage(diffContent));
+            }
+
+            // Add each file as separate message with clear demarcation
+            foreach (var file in contextFiles)
+            {
+                var fileContent = $"=== FILE: {file.FilePath} ===\n" +
+                                $"```csharp\n{file.Content}\n```\n" +
+                                $"=== END FILE: {file.FilePath} ===";
+
+                messages.Add(new UserChatMessage(fileContent));
+            }
+
+            // Add validation task and format requirements
+            messages.Add(new UserChatMessage(
+                $"{agentInstructions}\n\n" +
+                "=== JSON FORMAT REQUIREMENTS ===\n" +
+                "Return JSON format: {{\"passed\": bool, \"violations\": [{{\"file\": \"path\", \"line\": number, \"message\": \"description\"}}], \"explanation\": \"detailed explanation\"}}\n\n" +
+                "CRITICAL RULES:\n" +
+                "- If the rule PASSES: Set \"passed\": true, \"violations\": [], \"explanation\": \"Rule passed - no violations found\"\n" +
+                "- If the rule FAILS: Set \"passed\": false, populate violations array with specific issues, provide detailed explanation\n" +
+                "- Do NOT include violations when passed=true\n" +
+                "- Do NOT provide explanations about potential violations when the rule passes\n\n" +
+                "Your entire response must be valid JSON that can be parsed directly. Do not include any text before or after the JSON."
+            ));
+
+            // Get response from GitHub Models with options
+            Console.WriteLine("Calling GitHub Models with validation prompt...");
+            var startTime = DateTime.Now;
+
+            var chatCompletionOptions = new ChatCompletionOptions()
+            {
+                MaxOutputTokenCount = 16000, // GitHub Models free tier is rate-limited, not usage-based
+                Temperature = 1
+            };
+
+            var response = chatClient.CompleteChat(messages, chatCompletionOptions);
+            var endTime = DateTime.Now;
+            var responseText = response.Value.Content[0].Text ?? string.Empty;
+
+            Console.WriteLine($"GitHub Models response time: {(endTime - startTime).TotalSeconds:F2} seconds");
+
+            // Parse the JSON response (start simple, add fixes only if needed for GitHub Models)
+            var parsedResponse = ExtractAndParseJsonResponse(responseText);
+
+            return Task.FromResult(parsedResponse);
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"Error calling GitHub Models: {ex}");
+            return Task.FromResult<object>(new
+            {
+                passed = false,
+                violations = new object[0],
+                explanation = $"Error during GitHub Models validation: {ex.Message}"
             });
         }
     }
@@ -94,6 +210,7 @@ public class ApiValidationStrategy : IValidationStrategy
         // Add the agent instructions
         contextBuilder.AppendLine(agentInstructions);
         contextBuilder.AppendLine("Do not include commented-out code in your evaluation. Do not even mention it.");
+        contextBuilder.AppendLine("Ignore all comments in the code. Pretend they are not even there.");
 
         // Add diffs if provided
         if (diffs is not null && diffs.Length > 0)
@@ -154,7 +271,7 @@ public class ApiValidationStrategy : IValidationStrategy
             //Console.WriteLine($"Context file size: {new FileInfo(contextFileName).Length} bytes");
 
             // Create fresh chat client for this validation (no conversation history)
-            var chatClient = await CreateFreshChatClientAsync();
+            var chatClient = CreateFreshChatClient();
 
             // Build structured messages for better AI comprehension
             List<ChatMessage> messages = new List<ChatMessage>()
@@ -284,7 +401,7 @@ public class ApiValidationStrategy : IValidationStrategy
         }
     }
 
-    private static async Task<ChatClient> CreateFreshChatClientAsync()
+    private static ChatClient CreateFreshChatClient()
     {
         if (ApiValidationStrategy.LocalFoundryManager is null || ApiValidationStrategy.LocalFoundryModel is null)
         {
@@ -301,6 +418,25 @@ public class ApiValidationStrategy : IValidationStrategy
         });
 
         return client.GetChatClient(ApiValidationStrategy.LocalFoundryModel.ModelId);
+    }
+
+    private static ChatClient CreateGitHubModelsChatClient()
+    {
+        if (string.IsNullOrEmpty(ApiValidationStrategy.GitHubModelsPAT))
+        {
+            throw new InvalidOperationException("GitHub Models PAT not configured");
+        }
+
+        // Create OpenAI client configured for GitHub Models endpoint
+        ApiKeyCredential key = new ApiKeyCredential(ApiValidationStrategy.GitHubModelsPAT);
+        OpenAIClient client = new OpenAIClient(key, new OpenAIClientOptions
+        {
+            Endpoint = new Uri(ApiValidationStrategy.GitHubModelsEndpoint),
+            NetworkTimeout = TimeSpan.FromMinutes(5), // Cloud service should be faster
+            RetryPolicy = new System.ClientModel.Primitives.ClientRetryPolicy(maxRetries: 2) // Cloud can retry
+        });
+
+        return client.GetChatClient(ApiValidationStrategy.GitHubModelsModelId);
     }
 
     private static object ExtractAndParseJsonResponse(string responseText)

@@ -19,6 +19,12 @@ public static class ArchValidationTool
     // ARCHGUARD_INSERTION_POINT_CONSTANTS_START
     // New rule constants go here in alphabetical order by rule name
 
+    // ARCHGUARD_GENERATED_RULE_START - ValidateDependencyDirection
+    // Generated from template on: 10/7/25
+    // DO NOT EDIT - This code will be regenerated
+    public static string DependencyDirectionMcpToolDescription = "Validates that Dependencies flow inward.";
+    // ARCHGUARD_GENERATED_RULE_END - ValidateDependencyDirection
+
     // ARCHGUARD_GENERATED_RULE_START - ValidateEntityDtoPropertyMapping
     // Generated from template on: 9/17/25
     // DO NOT EDIT - This code will be regenerated
@@ -67,6 +73,46 @@ public static class ArchValidationTool
 
     // ARCHGUARD_INSERTION_POINT_METHODS_START
     // New rule methods go here in alphabetical order by rule name
+
+    // ARCHGUARD_GENERATED_RULE_START - ValidateDependencyDirection
+    // Generated from template on: 10/7/25
+    // DO NOT EDIT - This code will be regenerated
+    /// <summary>
+    /// Validates that Dependencies flow inward.
+    /// </summary>
+    /// <param name="contextFiles">Array of file contents with their paths for analysis</param>
+    /// <param name="diffs">Optional array of git diffs showing recent changes</param>
+    /// <returns>Validation result indicating pass/fail with detailed explanation</returns>
+    [McpServerTool(UseStructuredContent = true)] // Name, Title, and Desc are set in Program.cs setup code.
+    public static async Task<string> ValidateDependencyDirectionAsync(
+        IMcpServer server,
+        ContextFile[] contextFiles,
+        string[]? diffs = null)
+    {
+        // Method comment goes here
+
+        try
+        {
+            var root = await ArchValidationTool.GetRootOrThrowExceptionAsync(server);
+
+            var validationRequest = new ValidationRequest();
+
+            // Convert MCP root (file:// URI) to both Windows and WSL paths
+            validationRequest.WindowsRoot = ConvertFileUriToWindowsPath(root);
+            validationRequest.WslRoot = ConvertFileUriToWslPath(root);
+            validationRequest.ContextFiles = contextFiles;
+            validationRequest.Diffs = diffs;
+            validationRequest.SelectedCodingAgent = ArchValidationTool.SelectedCodingAgent;
+
+            return await ValidationService.ValidateDependencyDirectionAsync(validationRequest);
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine(ex.ToString());
+            throw new McpException($"Error in ValidateDependencyDirectionAsync method: {ex.Message}");
+        }
+    }
+    // ARCHGUARD_GENERATED_RULE_END - ValidateDependencyDirection
 
     // ARCHGUARD_GENERATED_RULE_START - ValidateEntityDtoPropertyMapping
     // Generated from template on: 9/17/25

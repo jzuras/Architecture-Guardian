@@ -48,6 +48,21 @@ This document outlines current limitations, development observations, and areas 
 **Issue**: The MCP Tools' inputs are file names, not file contents, which is insufficient for analyis.
 - **Not Fixed**: The inputs were not corrected because Local Foundry is not suitable for this use case at this time.
 
+### GitHub Models Integration
+**Status**: Recently implemented, testing in progress
+- **Implementation**: Successfully integrated with OpenAI-compatible endpoint
+- **Configuration**: Supports PAT from appsettings.json or environment variable
+- **Known Limitations**:
+  - Network dependency (requires internet connection)
+  - Rate limits on free tier
+  - Latency from network round-trips
+- **Advantages**:
+  - Better instruction following expected (GPT-4 vs local models)
+  - No local hardware requirements
+  - Likely cleaner JSON output than smaller models
+- **Testing Status**: Build successful, awaiting live API validation testing
+- **Documentation**: See README.md and GITHUB_MODELS_IMPLEMENTATION_GUIDE.md
+
 ### LocalFoundry Validation Accuracy
 **Issue**: Extensive testing revealed significant validation accuracy limitations
 - **Symptoms**:

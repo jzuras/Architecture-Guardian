@@ -19,7 +19,7 @@ ArchGuard operates in two modes:
 1. **MCP Server Mode**: AI agents (GitHub CoPiliot in VS and VS Code) can call validation tools directly
 2. **GitHub Webhook Mode**: Automated validation triggered by GitHub events (push, pull requests, check runs)
 
-Both modes use the same core validation logic that spawns an AI Agent (ClaudeCode, GeminiCLI, or LocalFoundry) to analyze C# projects for
+Both modes use the same core validation logic that spawns an AI Agent (ClaudeCode, GeminiCLI, LocalFoundry, or GitHubModels) to analyze C# projects for
 dependency injection issues or any other rules defined.
 
 ## Key Features
@@ -75,10 +75,17 @@ Update `appsettings.json`:
     "PrivateKeyFilePath": "path/to/private-key.pem"
   },
   "RepositoryCloning": {
-    "CodingAgent": "ClaudeCode",      // Options: "ClaudeCode", "GeminiCLI", "LocalFoundry" (not recommended - see LocalFoundry section)
+    "CodingAgent": "ClaudeCode",      // Options: "ClaudeCode", "GeminiCLI", "LocalFoundry" (not recommended), "GitHubModels"
     "CleanupIntervalMinutes": 60,
     "MaxRetentionHours": 2,
     "CleanupAfterValidation": true
+  },
+  "GitHub": {
+    "Models": {
+      "PAT": "",                      // GitHub Personal Access Token (required for GitHubModels agent)
+      "ModelId": "openai/gpt-4o",
+      "Endpoint": "https://models.github.ai/inference"
+    }
   }
 }
 ```
@@ -110,10 +117,10 @@ dotnet run
 
 ### How It Works
 
-1. **Repository Access**: Clones GitHub repository to temporary directory, or accesses local directory when called via MCP.
-2. **Analysis**: Spawns AI agent process (ClaudeCode, GeminiCLI, or LocalFoundry) to analyze the project
+1. **Repository Access**: Clones GitHub repository to temporary directory (file-based agents), extracts files via GitHub API (API-based agents), or accesses local directory when called via MCP.
+2. **Analysis**: Uses AI agent (ClaudeCode, GeminiCLI, LocalFoundry, or GitHubModels) to analyze the project
 3. **Results**: Returns JSON with validation results, violations, and explanations
-4. **Cleanup**: Removes temporary repository (immediate or background)
+4. **Cleanup**: Removes temporary repository (immediate or background) for file-based agents
 
 ### Tool Input Schema
 
@@ -232,6 +239,44 @@ If you wish to experiment with LocalFoundry:
    This downloads the model locally and can take significant time on first run. Running this command first prevents timeouts during ArchGuard startup.
 
 3. **Test your setup**: Use the LocalFoundry command-line chatbot or [AI Studio for VS Code](https://learn.microsoft.com/en-us/azure/ai-foundry/foundry-local/concepts/foundry-local-architecture) to directly chat with the model to test performance.
+
+## GitHub Models Integration
+
+**Status**: Available and recommended for cloud-based validation.
+
+GitHub Models provides access to cloud-based AI models (including GPT-4) through GitHub's infrastructure. This is the recommended API-based agent option.
+
+### Advantages
+
+- **Better accuracy**: Cloud models (especially GPT-4) provide superior instruction following compared to local models
+- **No hardware requirements**: No local GPU or CPU constraints
+- **Reliable JSON output**: Minimal parsing issues compared to smaller local models
+- **Free tier available**: Rate-limited but no usage costs for basic access
+- **No initialization**: Instant availability without local model downloads
+
+### Setup
+
+1. **Generate GitHub Personal Access Token (PAT)**:
+   - Visit https://github.com/settings/tokens
+   - Create a new token with appropriate permissions for GitHub Models access
+   - See https://docs.github.com/en/authentication/keeping-your-account-and-data-secure/managing-your-personal-access-tokens
+
+2. **Configure ArchGuard**:
+   - Set `CodingAgent` to `"GitHubModels"` in `appsettings.json`
+   - Add your PAT to `GitHub:Models:PAT` in appsettings.json, OR
+   - Set `GITHUB_MODELS_PAT` environment variable (recommended for security)
+
+3. **Optional customization**:
+   - Change `ModelId` to use different models (default: `"openai/gpt-4o"`)
+   - Endpoint is pre-configured to `https://models.github.ai/inference`
+
+### Limitations
+
+- **Network dependency**: Requires internet connection
+- **Rate limits**: Free tier has API call rate limits
+- **Latency**: Network round-trip vs local execution
+
+For detailed implementation information, see [GITHUB_MODELS_IMPLEMENTATION_GUIDE.md](GITHUB_MODELS_IMPLEMENTATION_GUIDE.md).
 
 ## Copyright and License
 

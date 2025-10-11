@@ -23,25 +23,34 @@ public enum CodingAgent
 {
     ClaudeCode,
     GeminiCli,
-    LocalFoundry
+    LocalFoundry,
+    GitHubModels
 }
 
 public static class ValidationService
 {
     internal static JsonSerializerOptions WriteIndentedJsonSerializerOptions { get; set; } = new JsonSerializerOptions { WriteIndented = true };
 
+    internal static string CommonAiAgentInstructions { get; } = "You are a senior c# developer who is highly skilled at performing code reviews with careful attention to detail.";
+
     // ARCHGUARD_TEMPLATE_CONSTANT_START
     // TEMPLATE_CHECK_NAME_CONSTANT: DependencyRegistrationAiAgentInstructions
-    public static string DependencyRegistrationAiAgentInstructions { get; } = "Validate Dependency Registration rule: Check that all services referenced in constructors are properly registered in the DI container.";
+    public static string DependencyRegistrationAiAgentInstructions { get; } = CommonAiAgentInstructions + "Validate Dependency Registration rule: Check that all services referenced in constructors exist in the DI container configuration.Look for services.AddScoped<TypeName>, services.AddSingleton<TypeName>, orservices.AddTransient<TypeName> where TypeName matches the constructor parameter type exactly.If found, the service is properly registered. Do not check whether interfaces are used.";
     // ARCHGUARD_TEMPLATE_CONSTANT_END
 
     // ARCHGUARD_INSERTION_POINT_CONSTANTS_START
     // New rule constants go here in alphabetical order by rule name
 
+    // ARCHGUARD_GENERATED_RULE_START - ValidateDependencyDirection
+    // Generated from template on: 10/7/25
+    // DO NOT EDIT - This code will be regenerated
+    public static string DependencyDirectionAiAgentInstructions { get; } = CommonAiAgentInstructions + "Validate Dependency Direction rule: Check that Domain layer code does not reference or depend on Infrastructure layer code. Domain namespace should not have 'using' statements importing Infrastructure namespace. Dependencies should flow inward: Infrastructure -> Domain, not Domain -> Infrastructure.";
+    // ARCHGUARD_GENERATED_RULE_END - ValidateDependencyDirection
+
     // ARCHGUARD_GENERATED_RULE_START - ValidateEntityDtoPropertyMapping
     // Generated from template on: 9/17/25
     // DO NOT EDIT - This code will be regenerated
-    public static string EntityDtoPropertyMappingAiAgentInstructions { get; } = "Analyze this codebase for Entity-DTO property mapping violations. Look for DTO classes that have mismatched property names, missing properties, or inconsistent data types compared to their corresponding domain entities. Report any DTOs where properties don't properly align with their entity counterparts (e.g., 'Id' vs 'UserId', missing required properties, or renamed properties that break mapping conventions).";
+    public static string EntityDtoPropertyMappingAiAgentInstructions { get; } = CommonAiAgentInstructions +  "Analyze this codebase for Entity-DTO property mapping violations. Look for DTO classes that have mismatched property names, missing properties, or inconsistent data types compared to their corresponding domain entities. Report any DTOs where properties don't properly align with their entity counterparts (e.g., 'Id' vs 'UserId', missing required properties, or renamed properties that break mapping conventions).";
     // ARCHGUARD_GENERATED_RULE_END - ValidateEntityDtoPropertyMapping
 
     // ARCHGUARD_INSERTION_POINT_CONSTANTS_END
@@ -66,6 +75,26 @@ public static class ValidationService
 
     // ARCHGUARD_INSERTION_POINT_METHODS_START
     // New rule methods go here in alphabetical order by rule name
+
+    // ARCHGUARD_GENERATED_RULE_START - ValidateDependencyDirection
+    // Generated from template on: 10/7/25
+    // DO NOT EDIT - This code will be regenerated
+    public static async Task<string> ValidateDependencyDirectionAsync(ValidationRequest request)
+    {
+        try
+        {
+            // Use strategy pattern for validation
+            var strategy = GetValidationStrategy(request.SelectedCodingAgent);
+
+            return await strategy.ValidateDependencyDirectionAsync(request);
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine(ex.ToString());
+            throw new InvalidOperationException($"Error in ValidateDependencyDirectionAsync method: {ex.Message}", ex);
+        }
+    }
+    // ARCHGUARD_GENERATED_RULE_END - ValidateDependencyDirection
 
     // ARCHGUARD_GENERATED_RULE_START - ValidateEntityDtoPropertyMapping
     // Generated from template on: 9/17/25
@@ -138,6 +167,7 @@ public static class ValidationService
         return codingAgent switch
         {
             CodingAgent.LocalFoundry => new ApiValidationStrategy(),
+            CodingAgent.GitHubModels => new ApiValidationStrategy(),
             CodingAgent.ClaudeCode => new FileSystemValidationStrategy(),
             CodingAgent.GeminiCli => new FileSystemValidationStrategy(),
             _ => new FileSystemValidationStrategy()
